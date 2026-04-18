@@ -26,14 +26,12 @@ for PID in $PIDS; do
   SRC_IP=$(echo "$SSH_CONN" | awk '{print $1}')
 
   if [ -n "$SRC_IP" ]; then
-    # DOCKER-USER is checked before Docker's RELATED,ESTABLISHED rules,
-    # so it's the only chain that reliably blocks connections on Docker hosts.
-    if ! $IPTABLES -C DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP 2>/dev/null; then
-      $IPTABLES -I DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP
+    if ! $IPTABLES -C INPUT -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP 2>/dev/null; then
+      $IPTABLES -I INPUT -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP
       echo "Banned IP $SRC_IP from new connections (existing session preserved)"
       logger -t kerneltrap "Banned new connections from $SRC_IP for user $USER_TARGET (PID $PID)"
     else
-      echo "IP $SRC_IP already banned from new connections"
+      echo "IP $SRC_IP already banned"
     fi
   else
     echo "Could not determine source IP for PID $PID (not an SSH session?)"
