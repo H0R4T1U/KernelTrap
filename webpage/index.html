@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KernelTrap — Linux Intrusion Detection & Honeypot System</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── NAV ── -->
+  <nav>
+    <a class="nav-logo" href="index.html">
+      <div class="nav-logo-icon">kt</div>
+      KernelTrap
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how-it-works">How it works</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="https://github.com/H0R4T1U/KernelTrap" target="_blank">GitHub</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn btn-ghost" href="https://github.com/H0R4T1U/KernelTrap" target="_blank">View source</a>
+      <a class="btn btn-primary" href="dashboard.html">Dashboard &rarr;</a>
+    </div>
+  </nav>
+
+  <!-- ── HERO ── -->
+  <div class="hero">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      eBPF &middot; ML Anomaly Detection &middot; Honeypot
+    </div>
+
+    <h1>Catch intruders at the<br /><span>kernel level</span></h1>
+
+    <p>
+      KernelTrap monitors Linux syscalls in real time using eBPF, scores behavior
+      with an Isolation Forest model, and automatically redirects suspicious users
+      into a honeypot environment — all without modifying a single binary.
+    </p>
+
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="dashboard.html">Open Dashboard</a>
+      <a class="btn btn-outline btn-lg" href="https://github.com/H0R4T1U/KernelTrap" target="_blank">View on GitHub</a>
+    </div>
+  </div>
+
+  <!-- ── TERMINAL ── -->
+  <div class="terminal-wrapper">
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <span class="terminal-title">kerneltrap — bash</span>
+      </div>
+      <div class="terminal-body">
+        <div class="terminal-line">
+          <span class="t-prompt">$</span>
+          <span class="t-cmd">sudo tracee --output json | python3 syscall_logger.py --score --model ./beth_iforest_model</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-output">[INFO] Tracee eBPF probe loaded. Listening for syscall events...</span>
+        </div>
+        <div class="t-blank"></div>
+        <div class="terminal-line">
+          <span class="t-ok">[NORMAL]</span>
+          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.812 &nbsp;execve("/bin/ls") &rarr; 0</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-ok">[NORMAL]</span>
+          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.791 &nbsp;openat("/etc/hosts") &rarr; 3</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-alert">[LOW]&nbsp;&nbsp;&nbsp;</span>
+          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.034 &nbsp;ptrace(ATTACH, pid=2048) &rarr; 0</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-warn">[HIGH]&nbsp;&nbsp;</span>
+          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.001 &nbsp;mmap(PROT_EXEC|PROT_WRITE) &rarr; 0x7f...</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-warn">[HIGH]&nbsp;&nbsp;</span>
+          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.001 &nbsp;kill(pid=1, SIGTERM) &rarr; -1</span>
+        </div>
+        <div class="t-blank"></div>
+        <div class="terminal-line">
+          <span class="t-warn">[PIVOT]&nbsp;</span>
+          <span class="t-output">&nbsp;Threshold reached (5 high-severity in 60s). Redirecting alice &rarr; honeypot:2222</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-ok">[TRAP]&nbsp;&nbsp;</span>
+          <span class="t-output">&nbsp;User alice now in isolated honeypot environment. Logging session...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <!-- ── FEATURES ── -->
+  <section id="features">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything you need to<br />detect and contain threats</h2>
+    <p class="section-sub">
+      A complete intrusion detection pipeline from kernel-level collection
+      to automated attacker containment.
+    </p>
+
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon">&#9889;</div>
+        <h3>eBPF Syscall Monitoring</h3>
+        <p>Uses Tracee (eBPF) or auditd to collect every syscall event from the Linux kernel — zero overhead, no kernel patches required.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">&#129302;</div>
+        <h3>ML Anomaly Detection</h3>
+        <p>Isolation Forest model trained on the BETH dataset scores each event in real time. Detects behavioral anomalies, not just known signatures.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">&#128247;</div>
+        <h3>Honeypot Pivot</h3>
+        <p>After sustained suspicious activity, the user is transparently redirected into an isolated Docker honeypot via SSH — without alerting the attacker.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">&#128202;</div>
+        <h3>BETH Dataset Format</h3>
+        <p>All events are transformed to a standardized 16-column CSV format compatible with the BETH dataset for model training and evaluation.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>Per-user Tracking</h3>
+        <p>Anomaly windows are tracked per user with configurable thresholds. System users are automatically whitelisted to avoid false positives.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">&#9881;</div>
+        <h3>Systemd Integration</h3>
+        <p>Ships with a systemd service for continuous background logging. Configure once, monitor forever with journald log integration.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ── HOW IT WORKS ── -->
+  <section id="how-it-works">
+    <div class="section-label">How it works</div>
+    <h2 class="section-title">From syscall to honeypot<br />in milliseconds</h2>
+    <p class="section-sub">
+      KernelTrap operates in a continuous pipeline — collecting, scoring,
+      and acting on kernel events as they happen.
+    </p>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-content">
+          <h3>Collect syscall events via eBPF</h3>
+          <p>
+            Tracee attaches eBPF probes to the Linux kernel and emits a JSON stream of
+            syscall events — including process ID, user ID, syscall name, arguments, and return values.
+            No application changes needed. Supports <code>tracee</code> and <code>auditd</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-content">
+          <h3>Transform to BETH format</h3>
+          <p>
+            <code>syscall_logger.py</code> parses each event and normalizes it into the
+            16-column BETH dataset format, extracting features like
+            <code>mountNamespace</code>, <code>parentProcessId</code>, and <code>returnValue</code>
+            used by the model.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-content">
+          <h3>Score with Isolation Forest</h3>
+          <p>
+            Each event is scored in real time by the trained Isolation Forest model.
+            Events are classified into three severity levels: <code>NORMAL</code>, <code>LOW</code>, and <code>HIGH</code> —
+            based on how anomalous the 7-feature vector is.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-content">
+          <h3>Track anomaly windows per user</h3>
+          <p>
+            A sliding time window tracks how many <code>HIGH</code>-severity events a user
+            generates. If the threshold is exceeded (default: 5 events in 60 seconds),
+            an automated pivot is triggered.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">05</div>
+        <div class="step-content">
+          <h3>Pivot attacker to honeypot</h3>
+          <p>
+            The <code>hp_pivot_user</code> script sends SIGUSR1 to the user's shell,
+            which transparently exec's into an SSH session pointing to the Docker honeypot on
+            <code>localhost:2222</code>. The attacker continues — now in an isolated environment.
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ── ARCHITECTURE ── -->
+  <section id="architecture">
+    <div class="section-label">Architecture</div>
+    <h2 class="section-title">System overview</h2>
+    <p class="section-sub">
+      A modular pipeline connecting the Linux kernel, an ML scoring engine,
+      and an isolated honeypot container.
+    </p>
+
+    <div class="arch-box"><span class="highlight">┌─────────────────┐</span>     <span class="highlight">┌──────────────────┐</span>     <span class="highlight">┌────────────────────┐</span>
+<span class="highlight">│  Tracee (eBPF)  │</span><span class="dim">────▶</span><span class="highlight">│  syscall_logger  │</span><span class="dim">────▶</span><span class="highlight">│  CSV (BETH format) │</span>
+<span class="highlight">│  or auditd      │</span>     <span class="highlight">│                  │</span>     <span class="dim">└────────────────────┘</span>
+<span class="dim">└─────────────────┘</span>     <span class="highlight">│  ┌────────────┐  │</span>     <span class="highlight">┌────────────────────┐</span>
+                        <span class="highlight">│  │ Transform  │  │</span><span class="dim">────▶</span><span class="highlight">│  Isolation Forest  │</span>
+                        <span class="highlight">│  └────────────┘  │</span>     <span class="highlight">│  (real-time score) │</span>
+                        <span class="highlight">│                  │</span>     <span class="dim">└────────────────────┘</span>
+                        <span class="highlight">│  ┌────────────┐  │</span>              <span class="dim">│</span>
+                        <span class="highlight">│  │  Scoring   │◀─┘</span>              <span class="dim">▼</span>
+                        <span class="highlight">│  └────────────┘</span>       <span class="highlight">┌────────────────────┐</span>
+                        <span class="dim">└──────────────────┘</span>    <span class="highlight">│   Honeypot Pivot   │</span>
+                                                <span class="highlight">│   Docker :2222     │</span>
+                                                <span class="dim">└────────────────────┘</span></div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ── TECH STACK ── -->
+  <section>
+    <div class="section-label">Built with</div>
+    <h2 class="section-title">Technology stack</h2>
+    <p class="section-sub">
+      Open-source tools from the Linux and security ecosystem.
+    </p>
+
+    <div class="tech-grid">
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Linux eBPF</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Tracee by Aqua Security</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Python 3.8+</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>scikit-learn</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Isolation Forest</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>BETH Dataset</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Docker</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>systemd</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>auditd</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>joblib / numpy</div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ── -->
+  <hr class="divider" />
+  <footer>
+    <div class="footer-left">
+      <div class="nav-logo-icon" style="width:22px;height:22px;font-size:11px;">kt</div>
+      <span>KernelTrap &mdash; Academic project &copy; 2024</span>
+    </div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/H0R4T1U/KernelTrap" target="_blank">GitHub</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="dashboard.html">Dashboard</a></li>
+    </ul>
+  </footer>
+
+</body>
+</html>

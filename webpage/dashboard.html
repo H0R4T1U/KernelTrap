@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KernelTrap — Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── NAV ── -->
+  <nav>
+    <a class="nav-logo" href="index.html">
+      <div class="nav-logo-icon">kt</div>
+      KernelTrap
+    </a>
+    <ul class="nav-links">
+      <li><a href="index.html#features">Features</a></li>
+      <li><a href="index.html#how-it-works">How it works</a></li>
+      <li><a href="https://github.com/H0R4T1U/KernelTrap" target="_blank">GitHub</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn btn-ghost" href="index.html">&larr; Back to home</a>
+    </div>
+  </nav>
+
+  <!-- ── DASHBOARD PLACEHOLDER ── -->
+  <div class="dashboard-placeholder">
+
+    <div class="coming-soon-badge">
+      <span class="hero-badge-dot"></span>
+      Coming soon
+    </div>
+
+    <h1>Dashboard is on the way</h1>
+
+    <p>
+      The KernelTrap web dashboard will provide a live view of syscall events,
+      anomaly scores, active honeypot sessions, and per-user threat timelines.
+    </p>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+      <a class="btn btn-primary btn-lg" href="index.html">&larr; Back to home</a>
+      <a class="btn btn-outline btn-lg" href="https://github.com/H0R4T1U/KernelTrap" target="_blank">View progress on GitHub</a>
+    </div>
+
+    <!-- Ghost preview of the planned dashboard -->
+    <div class="dashboard-preview-grid">
+
+      <div class="dash-card">
+        <div class="dash-card-label">Events / min</div>
+        <div class="dash-card-value green">1,482</div>
+        <div class="dash-bar-row">
+          <div class="dash-bar"><div class="dash-bar-fill" style="width:72%"></div></div>
+          <span style="font-size:11px;color:#3f3f46">72%</span>
+        </div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-label">Anomalies (24h)</div>
+        <div class="dash-card-value yellow">38</div>
+        <div class="dash-bar-row">
+          <div class="dash-bar"><div class="dash-bar-fill" style="width:18%;background:#f59e0b"></div></div>
+          <span style="font-size:11px;color:#3f3f46">18%</span>
+        </div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-label">Honeypot sessions</div>
+        <div class="dash-card-value red">3</div>
+        <div class="dash-bar-row">
+          <div class="dash-bar"><div class="dash-bar-fill" style="width:8%;background:#ef4444"></div></div>
+          <span style="font-size:11px;color:#3f3f46">active</span>
+        </div>
+      </div>
+
+      <div class="dash-card" style="grid-column: span 3;">
+        <div class="dash-card-label">Recent high-severity events</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#71717a;font-family:'JetBrains Mono',monospace;">
+            <span style="color:#ef4444">[HIGH]</span>
+            <span>uid=1001</span>
+            <span>mmap(PROT_EXEC|PROT_WRITE)</span>
+            <span>score: 0.001</span>
+            <span>2s ago</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#71717a;font-family:'JetBrains Mono',monospace;">
+            <span style="color:#f59e0b">[LOW]&nbsp;</span>
+            <span>uid=1002</span>
+            <span>ptrace(ATTACH, 4812)</span>
+            <span>score: 0.034</span>
+            <span>14s ago</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#71717a;font-family:'JetBrains Mono',monospace;">
+            <span style="color:#ef4444">[HIGH]</span>
+            <span>uid=1001</span>
+            <span>kill(pid=1, SIGTERM)</span>
+            <span>score: 0.002</span>
+            <span>31s ago</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── FOOTER ── -->
+  <hr class="divider" />
+  <footer>
+    <div class="footer-left">
+      <div class="nav-logo-icon" style="width:22px;height:22px;font-size:11px;">kt</div>
+      <span>KernelTrap &mdash; Academic project &copy; 2024</span>
+    </div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/H0R4T1U/KernelTrap" target="_blank">GitHub</a></li>
+      <li><a href="index.html#features">Features</a></li>
+    </ul>
+  </footer>
+
+</body>
+</html>
