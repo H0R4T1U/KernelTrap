@@ -3,6 +3,8 @@
 # Sends SIGUSR1 to all interactive bash sessions for that user and bans
 # the source IP of each session via iptables.
 
+IPTABLES=$(command -v iptables || echo /usr/sbin/iptables)
+
 USER_TARGET="$1"
 if [ -z "$USER_TARGET" ]; then
   echo "Usage: $0 <username>" >&2
@@ -26,8 +28,8 @@ for PID in $PIDS; do
   if [ -n "$SRC_IP" ]; then
     # DOCKER-USER is checked before Docker's RELATED,ESTABLISHED rules,
     # so it's the only chain that reliably blocks connections on Docker hosts.
-    if ! iptables -C DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP 2>/dev/null; then
-      iptables -I DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP
+    if ! $IPTABLES -C DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP 2>/dev/null; then
+      $IPTABLES -I DOCKER-USER -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP
       echo "Banned IP $SRC_IP from new connections (existing session preserved)"
       logger -t kerneltrap "Banned new connections from $SRC_IP for user $USER_TARGET (PID $PID)"
     else
