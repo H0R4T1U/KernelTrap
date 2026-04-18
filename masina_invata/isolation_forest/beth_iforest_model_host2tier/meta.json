@@ -1,0 +1,27 @@
+{
+  "features": [
+    "processId",
+    "parentProcessId",
+    "userId",
+    "mountNamespace",
+    "eventId",
+    "argsNum",
+    "returnValue"
+  ],
+  "host_col": null,
+  "low_percentile": 2.0,
+  "high_percentile": 0.2,
+  "thresholds": {
+    "labelled_validation_data": {
+      "low": -0.021905228785165765,
+      "high": -0.10165852278727716,
+      "n_scores": 188967
+    }
+  },
+  "global_thresholds": {
+    "low": -0.021905228785165765,
+    "high": -0.10165852278727716,
+    "n_scores": 188967
+  },
+  "notes": "normality_score = IsolationForest.decision_function (higher is more normal). severity tiers are based on per-host score percentiles computed on validation set."
+}
