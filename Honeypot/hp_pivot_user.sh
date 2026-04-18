@@ -24,9 +24,10 @@ for PID in $PIDS; do
   SRC_IP=$(echo "$SSH_CONN" | awk '{print $1}')
 
   if [ -n "$SRC_IP" ]; then
-    # Check if this IP is already banned to avoid duplicate rules
-    if ! iptables -C INPUT -s "$SRC_IP" -j DROP 2>/dev/null; then
-      iptables -A INPUT -s "$SRC_IP" -j DROP
+    # DOCKER-USER is checked before Docker's RELATED,ESTABLISHED rules,
+    # so it's the only chain that reliably blocks connections on Docker hosts.
+    if ! iptables -C DOCKER-USER -s "$SRC_IP" -j DROP 2>/dev/null; then
+      iptables -I DOCKER-USER -s "$SRC_IP" -j DROP
       echo "Banned IP $SRC_IP (session PID $PID, user $USER_TARGET)"
       logger -t kerneltrap "Banned IP $SRC_IP for user $USER_TARGET (PID $PID)"
     else
