@@ -1,0 +1,56 @@
+# KernelTrap Agent Configuration
+
+source:
+  type: tracee
+  auditd_log: /var/log/audit/audit.log
+  hostname: ""
+
+output:
+  # Local CSV backup (set to "" to disable)
+  csv_path: /var/log/kerneltrap/events.csv
+  rotate_daily: true
+  max_size_mb: 100
+  keep_rotations: 7
+
+# Redis / central server connection
+redis:
+  # IP or hostname of the central analysis server
+  host: "10.0.0.5"
+  port: 6379
+
+  # Events per batch before flushing to Redis Stream
+  # Higher = less network overhead, higher = more latency to detection
+  batch_size: 100
+
+  # Cap stream length on Redis to avoid unbounded memory usage
+  stream_maxlen: 10000
+
+  # Keep writing CSV locally as a backup even when Redis is enabled
+  fallback_csv: true
+
+# Honeypot pivot script (called when central server sends a pivot command)
+honeypot:
+  pivot_script: /usr/local/sbin/hp_pivot_user
+
+performance:
+  buffer_size: 100
+  flush_interval: 5
+  max_events_per_second: 0
+  sampling_rate: 1.0
+
+filters:
+  include_syscalls: []
+  exclude_syscalls:
+    - clock_gettime
+    - gettimeofday
+    - nanosleep
+    - poll
+    - epoll_wait
+  include_users: []
+  exclude_users: []
+  min_event_id: 0
+
+debug:
+  verbose: false
+  log_parse_errors: false
+  stats_interval: 1000
