@@ -19,7 +19,7 @@ if pgrep -f "syscall_logger.py" > /dev/null 2>&1; then
   sleep 1
 fi
 
-sudo tracee --output json \
+sudo docker logs -f tracee \
   | .venv/bin/python masina_invata/logger/syscall_logger.py \
       --source tracee \
       --redis-host "$SERVER_IP" \
@@ -28,4 +28,4 @@ sudo tracee --output json \
 echo "    tracee pipeline started (PID $!)"
 echo
 echo "[*] Agent running. To stop:"
-echo "    sudo pkill -f syscall_logger; sudo pkill -f tracee"
+echo "    sudo pkill -f syscall_logger"
