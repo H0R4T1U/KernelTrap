@@ -34,7 +34,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from central_server.scorer import Scorer
-from central_server.window import SlidingWindowTracker
+from central_server.window_v3 import SlidingWindowTracker
 
 # ---------------------------------------------------------------------------
 # Configuration (override with env vars)
@@ -49,6 +49,10 @@ WHITELIST_UIDS = set(
     int(u) for u in os.getenv("WHITELIST_UIDS", "0").split(",") if u.strip().isdigit()
 )
 HOST_DISCOVERY_SEC = int(os.getenv("HOST_DISCOVERY_SEC", "30"))
+PROCESS_DIVERSITY_THRESHOLD = int(os.getenv("PROCESS_DIVERSITY_THRESHOLD", "20"))
+EXEC_FREQUENCY_THRESHOLD = int(os.getenv("EXEC_FREQUENCY_THRESHOLD", "100"))
+LOW_SEVERITY_THRESHOLD = int(os.getenv("LOW_SEVERITY_THRESHOLD", "30"))
+RECON_BINARY_THRESHOLD = int(os.getenv("RECON_BINARY_THRESHOLD", "5"))
 
 # ---------------------------------------------------------------------------
 
@@ -88,6 +92,10 @@ async def startup():
         pivot_threshold=PIVOT_THRESHOLD,
         window_seconds=PIVOT_WINDOW_SEC,
         whitelist_uids=WHITELIST_UIDS,
+        process_diversity_threshold=PROCESS_DIVERSITY_THRESHOLD,
+        exec_frequency_threshold=EXEC_FREQUENCY_THRESHOLD,
+        low_severity_threshold=LOW_SEVERITY_THRESHOLD,
+        recon_binary_threshold=RECON_BINARY_THRESHOLD,
     )
 
     asyncio.create_task(_event_consumer_loop(), name="event-consumer")
@@ -174,7 +182,13 @@ async def _process_message(hostname: str, fields: Dict[str, str]):
     pipe = _redis.pipeline()
 
     for result in score_results:
-        _tracker.feed(hostname, result["userId"], result["severity"])
+        _tracker.feed(
+            hostname,
+            result["userId"],
+            result["severity"],
+            process_name=result.get("processName", ""),
+            event_name=result.get("eventName", ""),
+        )
         pipe.xadd(
             score_stream_key,
             {"data": json.dumps(result)},
