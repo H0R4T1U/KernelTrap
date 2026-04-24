@@ -20,7 +20,7 @@ if pgrep -f "syscall_logger.py" > /dev/null 2>&1; then
 fi
 
 sudo docker logs -f tracee \
-  | .venv/bin/python masina_invata/logger/syscall_logger.py \
+  | sudo .venv/bin/python masina_invata/logger/syscall_logger.py \
       --source tracee \
       --redis-host "$SERVER_IP" \
       --redis-port "$REDIS_PORT" &
