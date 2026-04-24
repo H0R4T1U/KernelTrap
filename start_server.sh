@@ -31,10 +31,22 @@ if pgrep -f "uvicorn central_server.main" > /dev/null 2>&1; then
   sleep 1
 fi
 
+mkdir -p logs
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
-  .venv/bin/uvicorn central_server.main:app --host 0.0.0.0 --port 8000 &
+  nohup .venv/bin/uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \
+  > logs/server.log 2>&1 &
+disown
 
-echo "    uvicorn started (PID $!)"
+sleep 2
+if pgrep -f "uvicorn central_server.main" > /dev/null; then
+  echo "    uvicorn started (PID $(pgrep -f 'uvicorn central_server.main'))"
+else
+  echo "    [!] uvicorn FAILED to start. Last log lines:"
+  tail -20 logs/server.log
+  exit 1
+fi
 echo
-echo "[*] Server running. To stop:"
-echo "    pkill -f uvicorn"
+echo "[*] Server running. Streaming logs (Ctrl+C stops streaming but server keeps running)."
+echo "[*] To stop server: pkill -f uvicorn"
+echo
+tail -f logs/server.log
