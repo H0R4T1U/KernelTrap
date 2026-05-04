@@ -60,7 +60,7 @@ else
     echo "    Installing dashboard dependencies (first run)..."
     npm --prefix "$REPO_DIR/dashboard" install --silent
   fi
-  nohup npm --prefix "$REPO_DIR/dashboard" run dev -- --port 5173 \
+  nohup npm --prefix "$REPO_DIR/dashboard" run dev -- --host 0.0.0.0 --port 5173 \
     > logs/dashboard.log 2>&1 &
   disown
   sleep 2
