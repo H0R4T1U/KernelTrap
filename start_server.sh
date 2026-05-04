@@ -4,6 +4,9 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+# Activate Python virtual environment
+source .venv/bin/activate
+
 MODEL_DIR="${MODEL_DIR:-masina_invata/isolation_forest/beth_iforest_model_host2tier}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
@@ -33,7 +36,7 @@ fi
 
 mkdir -p logs
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
-  nohup .venv/bin/uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \
+  nohup uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \
   > logs/server.log 2>&1 &
 disown
 

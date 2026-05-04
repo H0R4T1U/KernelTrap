@@ -171,6 +171,9 @@ class SlidingWindowTracker:
         self._pending_pivots.clear()
         return pending
 
+    def re_queue_pivots(self, pivots: List[Tuple[str, int]]):
+        self._pending_pivots.extend(pivots)
+
     def stats(self) -> Dict:
         return {
             "tracked_entities": len(self._windows),
