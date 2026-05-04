@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "[*] Honeypot pivot installer starting..."
 
@@ -12,20 +12,21 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/hp_pivot_user.sh" ]; then
+  echo "[!] hp_pivot_user.sh not found in $SCRIPT_DIR — run install.sh from the Honeypot/ directory." >&2
+  exit 1
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "[*] Docker not found, installing docker.io..."
-  apt-get update
+  apt-get update -qq
   apt-get install -y docker.io
   systemctl enable --now docker
 fi
 
-######
-# 0.1 Configs
-#####
-
-
 HP_HOSTNAME=$(hostname)
-
 
 ############################################
 # 1. Build honeypot Docker image
@@ -63,7 +64,6 @@ RUN sed -ri 's/#?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config &&
     echo 'ClientAliveInterval 60' >> /etc/ssh/sshd_config && \
     echo 'ClientAliveCountMax 3' >> /etc/ssh/sshd_config
 
-# startup script that ensures /run/sshd exists and mimics host hostname (via env)
 COPY start-sshd.sh /usr/local/sbin/start-sshd.sh
 RUN chmod +x /usr/local/sbin/start-sshd.sh
 
@@ -75,23 +75,17 @@ echo "[*] Writing start-sshd.sh..."
 
 cat > start-sshd.sh << 'EOF'
 #!/bin/bash
-# Runtime init inside honeypot container
-
-# Ensure /run/sshd exists on tmpfs or writable fs
 mkdir -p /run/sshd
 
-# If HP_HOSTNAME env is set, mimic host hostname
 if [ -n "$HP_HOSTNAME" ]; then
   echo "$HP_HOSTNAME" > /etc/hostname
   hostname "$HP_HOSTNAME"
 fi
 
-# If HP_ISSUE is set, overwrite /etc/issue to mimic host OS banner
 if [ -n "$HP_ISSUE" ]; then
   printf "%b" "$HP_ISSUE" > /etc/issue
 fi
 
-# If HP_LSB_RELEASE is set, overwrite /etc/lsb-release
 if [ -n "$HP_LSB_RELEASE" ]; then
   printf "%b" "$HP_LSB_RELEASE" > /etc/lsb-release
 fi
@@ -100,7 +94,10 @@ exec /usr/sbin/sshd -D -e
 EOF
 
 echo "[*] Building Docker image ssh-honeypot:latest..."
-docker build -t ssh-honeypot:latest .
+if ! docker build -t ssh-honeypot:latest . ; then
+  echo "[!] Docker build failed." >&2
+  exit 1
+fi
 
 ############################################
 # 2. Docker network and container
@@ -115,15 +112,9 @@ echo "[*] Removing any existing hp-shell container..."
 docker rm -f hp-shell >/dev/null 2>&1 || true
 
 HOSTNAME_REAL="$(hostname)"
-ISSUE_REAL="$(cat /etc/issue || echo 'Ubuntu \n \l')"
+ISSUE_REAL="$(cat /etc/issue 2>/dev/null || echo 'Ubuntu \n \l')"
+LSB_REAL="$(cat /etc/lsb-release 2>/dev/null || echo '')"
 
-if [ -f /etc/lsb-release ]; then
-  LSB_REAL="$(cat /etc/lsb-release)"
-else
-  LSB_REAL=""
-fi
-
-# Escape newlines for env passing
 ISSUE_ESCAPED=$(printf '%s\n' "$ISSUE_REAL" | sed ':a;N;$!ba;s/\n/\\n/g')
 LSB_ESCAPED=$(printf '%s\n' "$LSB_REAL" | sed ':a;N;$!ba;s/\n/\\n/g')
 
@@ -131,17 +122,29 @@ echo "[*] Starting hp-shell container on port 2222..."
 docker run -d --name hp-shell \
   --network honeynet \
   -p 2222:22 \
+  --restart unless-stopped \
   --read-only \
   --tmpfs /run \
   --tmpfs /tmp \
-  --hostname $(hostname) \
+  --hostname "$HOSTNAME_REAL" \
   -v hp_attacker_home:/home/attacker \
   -e HP_HOSTNAME="$HP_HOSTNAME" \
   -e HP_ISSUE="$ISSUE_ESCAPED" \
   -e HP_LSB_RELEASE="$LSB_ESCAPED" \
   ssh-honeypot:latest
 
-sleep 2
+echo "[*] Waiting for hp-shell container to be ready..."
+WAIT=0
+until docker exec hp-shell sh -c "test -S /run/sshd.pid || ss -tlnp | grep -q ':22'" 2>/dev/null; do
+  sleep 2
+  WAIT=$((WAIT+2))
+  if [ $WAIT -ge 30 ]; then
+    echo "[!] hp-shell container did not become ready in 30s. Logs:"
+    docker logs hp-shell | tail -20
+    exit 1
+  fi
+done
+echo "    hp-shell is ready"
 
 ############################################
 # 3. Generate pivot SSH key and copy pubkey into container
@@ -157,12 +160,12 @@ fi
 
 PUB_KEY="$(cat /etc/hptrap/hp_key.pub)"
 
-echo "[*] Installing public key into docker container's /home/attacker/.ssh/authorized_keys..."
-docker exec hp-shell sh -c "mkdir -p /home/attacker/.ssh"
-docker exec hp-shell sh -c "echo '$PUB_KEY' >> /home/attacker/.ssh/authorized_keys"
-docker exec hp-shell chown -R attacker:attacker /home/attacker/.ssh
-docker exec hp-shell chmod 700 /home/attacker/.ssh
-docker exec hp-shell chmod 600 /home/attacker/.ssh/authorized_keys
+echo "[*] Installing public key into hp-shell container..."
+docker exec hp-shell sh -c "mkdir -p /home/attacker/.ssh && \
+  echo '$PUB_KEY' >> /home/attacker/.ssh/authorized_keys && \
+  chown -R attacker:attacker /home/attacker/.ssh && \
+  chmod 700 /home/attacker/.ssh && \
+  chmod 600 /home/attacker/.ssh/authorized_keys"
 
 ############################################
 # 4. Create hptrap group and set key perms
@@ -183,74 +186,120 @@ chmod 640 /etc/hptrap/hp_key
 echo "[*] Installing /etc/profile.d/hptrap.sh..."
 
 cat > /etc/profile.d/hptrap.sh << 'EOF'
-# Honeypot pivot trap for all interactive bash shells
+# Honeypot pivot trap — loaded for all interactive bash shells
+if [ -n "$PS1" ] && [ -z "$HPTRAP_INITIALIZED" ]; then
+  export HPTRAP_INITIALIZED=1
 
-# Only for interactive shells
-if [ -n "$PS1" ]; then
-  if [ -z "$HPTRAP_INITIALIZED" ]; then
-    export HPTRAP_INITIALIZED=1
+  hptrap_pivot() {
+    logger -t hptrap "Pivoting user $USER to honeypot (PID=$$, from $SSH_CONNECTION)"
+    exec ssh \
+      -i /etc/hptrap/hp_key \
+      -o StrictHostKeyChecking=no \
+      attacker@127.0.0.1 -p 2222
+  }
 
-    hptrap_pivot() {
-      # Log pivot
-      logger -t hptrap "Pivoting user $USER from host to honeypot (shell PID=$$, from $SSH_CONNECTION)"
-
-      # Exec into honeypot SSH (Docker container on localhost:2222)
-      exec ssh \
-        -i /etc/hptrap/hp_key \
-        -o StrictHostKeyChecking=no \
-        attacker@127.0.0.1 -p 2222
-    }
-
-    # When this shell receives SIGUSR1, run hptrap_pivot()
-    trap hptrap_pivot USR1
-  fi
+  trap hptrap_pivot USR1
 fi
 EOF
 
 chmod 644 /etc/profile.d/hptrap.sh
 
 ############################################
-# 6. Helper script hp_pivot_user
+# 6. Install hp_pivot_user
 ############################################
 
 echo "[*] Installing /usr/local/sbin/hp_pivot_user..."
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "$SCRIPT_DIR/hp_pivot_user.sh" /usr/local/sbin/hp_pivot_user
-chmod +x /usr/local/sbin/hp_pivot_user
+chmod 755 /usr/local/sbin/hp_pivot_user
+
+# Verify installation
+if [ ! -x /usr/local/sbin/hp_pivot_user ]; then
+  echo "[!] Failed to install /usr/local/sbin/hp_pivot_user" >&2
+  exit 1
+fi
 
 ############################################
-# 7. Add all normal users to hptrap group
+# 7. Sudoers entry — allow running hp_pivot_user without password
 ############################################
 
-echo "[*] Adding all non-system users (UID >= 1000) to group 'hptrap'..."
+echo "[*] Adding sudoers rule for hp_pivot_user..."
+
+SUDOERS_FILE="/etc/sudoers.d/kerneltrap"
+cat > "$SUDOERS_FILE" << 'EOF'
+# KernelTrap: allow any user to run hp_pivot_user as root without password
+ALL ALL=(root) NOPASSWD: /usr/local/sbin/hp_pivot_user
+EOF
+chmod 440 "$SUDOERS_FILE"
+
+# Validate sudoers syntax
+if ! visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
+  echo "[!] sudoers file syntax error — removing." >&2
+  rm -f "$SUDOERS_FILE"
+  exit 1
+fi
+
+############################################
+# 8. Add all normal users (UID >= 1000) to hptrap group
+############################################
+
+echo "[*] Adding non-system users (UID >= 1000) to group 'hptrap'..."
 
 awk -F: '$3>=1000 && $1!="nobody"{print $1}' /etc/passwd | while read -r u; do
   usermod -aG hptrap "$u" || true
 done
 
 ############################################
-# 8. Final info
+# 9. Final verification
 ############################################
+
+echo
+echo "============================================"
+echo "[*] Verification"
+echo "============================================"
+
+OK=true
+
+if [ -x /usr/local/sbin/hp_pivot_user ]; then
+  echo "  [OK] /usr/local/sbin/hp_pivot_user installed"
+else
+  echo "  [FAIL] /usr/local/sbin/hp_pivot_user missing" && OK=false
+fi
+
+if [ -f /etc/hptrap/hp_key ] && [ -f /etc/hptrap/hp_key.pub ]; then
+  echo "  [OK] SSH pivot keypair at /etc/hptrap/hp_key"
+else
+  echo "  [FAIL] SSH pivot keypair missing" && OK=false
+fi
+
+if docker ps --format '{{.Names}}' | grep -q '^hp-shell$'; then
+  echo "  [OK] hp-shell container running"
+else
+  echo "  [FAIL] hp-shell container NOT running" && OK=false
+fi
+
+if [ -f "$SUDOERS_FILE" ]; then
+  echo "  [OK] sudoers rule at $SUDOERS_FILE"
+else
+  echo "  [FAIL] sudoers rule missing" && OK=false
+fi
+
+if [ "$OK" != "true" ]; then
+  echo
+  echo "[!] Install completed with errors. See FAIL items above." >&2
+  exit 1
+fi
 
 echo
 echo "[*] Install complete."
 echo
-echo "Honeypot container:"
-echo "  - Name: hp-shell"
-echo "  - SSH: attacker@<host>:2222"
+echo "Honeypot container:  hp-shell (SSH port 2222)"
+echo "Pivot script:        /usr/local/sbin/hp_pivot_user"
+echo "Pivot key:           /etc/hptrap/hp_key"
+echo "Sudoers rule:        $SUDOERS_FILE"
 echo
-echo "Pivot key:"
-echo "  - Private: /etc/hptrap/hp_key"
-echo "  - Public : /etc/hptrap/hp_key.pub (also installed in container)"
+echo "NOTE: Users must log out and log back in for the SIGUSR1 trap"
+echo "      (from /etc/profile.d/hptrap.sh) to take effect."
 echo
-echo "All interactive bash logins now have a SIGUSR1 trap that execs:"
-echo "  ssh -i /etc/hptrap/hp_key attacker@127.0.0.1 -p 2222"
-echo
-echo "To pivot a user currently connected via SSH, run:"
-echo "  sudo hp_pivot_user <username>"
-echo
-echo "NOTE: Users must log out and log back in for the new group (hptrap)"
-echo "      and profile script to fully apply to their sessions."
-echo
+echo "To test pivot manually:  sudo hp_pivot_user <username>"
 echo "[*] Done."
