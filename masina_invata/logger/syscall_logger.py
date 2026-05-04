@@ -511,6 +511,8 @@ class SyscallLogger:
 
         self._event_count = 0
         self._running = True
+        self._last_flush_time: float = 0.0
+        self.flush_interval: float = 5.0  # seconds
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
@@ -530,6 +532,7 @@ class SyscallLogger:
             csv_writer = CSVWriter(self.output_path)
             csv_writer.__enter__()
 
+        self._last_flush_time = time.monotonic()
         try:
             for line in sys.stdin:
                 if not self._running:
@@ -542,10 +545,14 @@ class SyscallLogger:
                 self._event_count += 1
                 self._process_event(event, csv_writer)
 
-                if self._event_count % self.buffer_size == 0:
+                now = time.monotonic()
+                time_due = (now - self._last_flush_time) >= self.flush_interval
+                count_due = self._event_count % self.buffer_size == 0
+                if count_due or time_due:
                     if csv_writer:
                         csv_writer.flush()
                     self._flush_redis()
+                    self._last_flush_time = now
                     self._print_stats()
 
         finally:
@@ -561,16 +568,21 @@ class SyscallLogger:
             csv_writer = CSVWriter(self.output_path)
             csv_writer.__enter__()
 
+        self._last_flush_time = time.monotonic()
         try:
             for event in self.parser.parse_file(log_path):
                 if not self._running:
                     break
                 self._event_count += 1
                 self._process_event(event, csv_writer)
-                if self._event_count % self.buffer_size == 0:
+                now = time.monotonic()
+                time_due = (now - self._last_flush_time) >= self.flush_interval
+                count_due = self._event_count % self.buffer_size == 0
+                if count_due or time_due:
                     if csv_writer:
                         csv_writer.flush()
                     self._flush_redis()
+                    self._last_flush_time = now
         finally:
             self._flush_redis()
             if csv_writer:
