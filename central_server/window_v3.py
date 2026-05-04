@@ -80,7 +80,7 @@ class SlidingWindowTracker:
         self._recon_binary_threshold = recon_binary_threshold
 
         self._windows: Dict[Tuple[str, int], UserWindow] = {}
-        self._pending_pivots: List[Tuple[str, int]] = []
+        self._pending_pivots: List[Tuple[str, int, str]] = []
 
     def feed(
         self,
@@ -127,7 +127,7 @@ class SlidingWindowTracker:
 
         if len(win.events) >= self._threshold or self._check_heuristics(win):
             win.pivoted = True
-            self._pending_pivots.append(key)
+            self._pending_pivots.append((key[0], key[1], self._get_trigger_reason(win)))
 
     def _evict_old(self, win: UserWindow, now: float):
         cutoff = now - self._window
@@ -166,13 +166,50 @@ class SlidingWindowTracker:
 
         return False
 
-    def drain_pivots(self) -> List[Tuple[str, int]]:
+    def _get_trigger_reason(self, win: UserWindow) -> str:
+        if len(win.events) >= self._threshold:
+            return "threshold"
+        if len(win.low_severity_events) >= self._low_severity_threshold:
+            return "H3"
+        if len(win.exec_events) >= self._exec_frequency_threshold:
+            return "H2"
+        if len({name for _, name in win.exec_process_names}) >= self._process_diversity_threshold:
+            return "H1"
+        if len({name for _, name in win.recon_hits}) >= self._recon_binary_threshold:
+            return "H4"
+        return "unknown"
+
+    def drain_pivots(self) -> List[Tuple[str, int, str]]:
         pending = self._pending_pivots[:]
         self._pending_pivots.clear()
         return pending
 
-    def re_queue_pivots(self, pivots: List[Tuple[str, int]]):
+    def re_queue_pivots(self, pivots: List[Tuple[str, int, str]]):
         self._pending_pivots.extend(pivots)
+
+    def user_states(self) -> List[Dict]:
+        result = []
+        for (hostname, user_id), win in self._windows.items():
+            unique_processes = len({name for _, name in win.exec_process_names})
+            unique_recon = len({name for _, name in win.recon_hits})
+            result.append({
+                "hostname": hostname,
+                "user_id": user_id,
+                "pivoted": win.pivoted,
+                "window": {
+                    "severity2_count": len(win.events),
+                    "severity2_threshold": self._threshold,
+                    "h3_low_severity_count": len(win.low_severity_events),
+                    "h3_threshold": self._low_severity_threshold,
+                    "h2_exec_count": len(win.exec_events),
+                    "h2_threshold": self._exec_frequency_threshold,
+                    "h1_unique_processes": unique_processes,
+                    "h1_threshold": self._process_diversity_threshold,
+                    "h4_unique_recon": unique_recon,
+                    "h4_threshold": self._recon_binary_threshold,
+                },
+            })
+        return result
 
     def stats(self) -> Dict:
         return {

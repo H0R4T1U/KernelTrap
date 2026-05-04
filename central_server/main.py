@@ -27,10 +27,13 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, List, Optional
+import time
+from collections import deque
+from typing import Any, Dict, List, Optional, Set
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from central_server.scorer import Scorer
@@ -63,6 +66,12 @@ logging.basicConfig(
 log = logging.getLogger("kerneltrap.central")
 
 app = FastAPI(title="KernelTrap Central Server")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Shared state (set up in lifespan)
 _redis: Optional[aioredis.Redis] = None
@@ -71,6 +80,13 @@ _tracker: Optional[SlidingWindowTracker] = None
 
 # Last-read stream IDs per host; "0" means read from beginning of stream
 _stream_cursors: Dict[str, str] = {}
+
+# Dashboard state
+_pivot_history: List[Dict[str, Any]] = []
+_ws_clients: Set[WebSocket] = set()
+_log_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+# hostname -> deque of event timestamps (last 60 s) for events/min calculation
+_host_event_times: Dict[str, deque] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +117,7 @@ async def startup():
     asyncio.create_task(_event_consumer_loop(), name="event-consumer")
     asyncio.create_task(_pivot_publisher_loop(), name="pivot-publisher")
     asyncio.create_task(_registration_loop(), name="registration")
+    asyncio.create_task(_ws_broadcaster_loop(), name="ws-broadcaster")
     log.info("Background tasks started")
 
 
@@ -204,6 +221,16 @@ async def _process_message(hostname: str, fields: Dict[str, str]):
 
     score_results = _scorer.score_batch(events, hostname)
 
+    # Track event timestamps per host for events/min calculation
+    now = time.time()
+    if hostname not in _host_event_times:
+        _host_event_times[hostname] = deque()
+    host_dq = _host_event_times[hostname]
+    cutoff = now - 60
+    while host_dq and host_dq[0] < cutoff:
+        host_dq.popleft()
+    host_dq.append(now)
+
     # Feed scores into the sliding window tracker and publish to scores stream
     score_stream_key = f"scores.{hostname}"
     pipe = _redis.pipeline()
@@ -222,6 +249,11 @@ async def _process_message(hostname: str, fields: Dict[str, str]):
             maxlen=50000,
             approximate=True,
         )
+        # Broadcast to WebSocket clients (non-blocking, drop if queue full)
+        try:
+            _log_broadcast_queue.put_nowait(result)
+        except asyncio.QueueFull:
+            pass
 
     await pipe.execute()
 
@@ -241,7 +273,7 @@ async def _pivot_publisher_loop():
             pending = _tracker.drain_pivots()
 
             failed = []
-            for hostname, user_id in pending:
+            for hostname, user_id, trigger in pending:
                 try:
                     command_key = f"commands.{hostname}"
                     cmd = json.dumps({"action": "pivot", "user": str(user_id)})
@@ -252,11 +284,17 @@ async def _pivot_publisher_loop():
                         approximate=True,
                     )
                     log.warning(
-                        f"PIVOT COMMAND sent → host='{hostname}', userId={user_id}"
+                        f"PIVOT COMMAND sent → host='{hostname}', userId={user_id}, trigger={trigger}"
                     )
+                    _pivot_history.append({
+                        "timestamp": time.time(),
+                        "hostname": hostname,
+                        "user_id": user_id,
+                        "trigger": trigger,
+                    })
                 except Exception as e:
                     log.error(f"Failed to send pivot for {hostname}/{user_id}: {e} — will retry")
-                    failed.append((hostname, user_id))
+                    failed.append((hostname, user_id, trigger))
 
             if failed:
                 _tracker.re_queue_pivots(failed)
@@ -265,6 +303,30 @@ async def _pivot_publisher_loop():
             break
         except Exception as e:
             log.error(f"Pivot publisher error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Background Task C: broadcast scored events to WebSocket clients
+# ---------------------------------------------------------------------------
+
+async def _ws_broadcaster_loop():
+    while True:
+        try:
+            event = await _log_broadcast_queue.get()
+            if not _ws_clients:
+                continue
+            msg = json.dumps(event)
+            dead: Set[WebSocket] = set()
+            for ws in list(_ws_clients):
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    dead.add(ws)
+            _ws_clients -= dead
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"WS broadcaster error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +359,69 @@ async def recent_scores(hostname: str, count: int = 50):
         except (KeyError, json.JSONDecodeError):
             pass
     return JSONResponse({"hostname": hostname, "scores": scores})
+
+
+@app.get("/agents")
+async def agents():
+    """Return connected agents with events/min and last-seen timestamp."""
+    now = time.time()
+    result = []
+    for hostname in _stream_cursors:
+        dq = _host_event_times.get(hostname, deque())
+        cutoff = now - 60
+        events_per_min = sum(1 for t in dq if t >= cutoff)
+        last_seen = dq[-1] if dq else None
+        result.append({
+            "hostname": hostname,
+            "events_per_min": events_per_min,
+            "last_seen": last_seen,
+        })
+    return JSONResponse({"agents": result})
+
+
+@app.get("/users")
+async def users():
+    """Return all tracked (hostname, userId) pairs with window pressure state."""
+    if not _tracker:
+        return JSONResponse({"users": []})
+    return JSONResponse({"users": _tracker.user_states()})
+
+
+@app.post("/pivot/{hostname}/{user_id}")
+async def manual_pivot(hostname: str, user_id: int):
+    """Manually trigger a pivot command for a specific user on a host."""
+    if hostname not in _stream_cursors:
+        return JSONResponse({"error": f"Unknown host: {hostname}"}, status_code=404)
+
+    command_key = f"commands.{hostname}"
+    cmd = json.dumps({"action": "pivot", "user": str(user_id)})
+    await _redis.xadd(command_key, {"data": cmd}, maxlen=1000, approximate=True)
+
+    _pivot_history.append({
+        "timestamp": time.time(),
+        "hostname": hostname,
+        "user_id": user_id,
+        "trigger": "manual",
+    })
+    log.warning(f"MANUAL PIVOT sent → host='{hostname}', userId={user_id}")
+    return JSONResponse({"status": "pivot_sent", "hostname": hostname, "user_id": user_id})
+
+
+@app.get("/pivot-history")
+async def pivot_history():
+    """Return pivot history, most recent first."""
+    return JSONResponse({"pivots": list(reversed(_pivot_history))})
+
+
+@app.websocket("/ws/logs")
+async def ws_logs(websocket: WebSocket):
+    """Stream scored events to the dashboard in real-time."""
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        _ws_clients.discard(websocket)
+    except Exception:
+        _ws_clients.discard(websocket)
