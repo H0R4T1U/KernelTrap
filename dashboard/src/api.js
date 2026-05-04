@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const BASE = "";
 
 export async function fetchAgents() {
   const r = await fetch(`${BASE}/agents`);
@@ -26,4 +26,5 @@ export async function triggerPivot(hostname, userId) {
   return r.json();
 }
 
-export const WS_URL = (import.meta.env.VITE_WS_URL || "ws://localhost:8000") + "/ws/logs";
+const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+export const WS_URL = `${wsProto}://${window.location.host}/ws/logs`;

@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional, Set
 import redis.asyncio as aioredis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from central_server.scorer import Scorer
@@ -73,16 +73,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Serve built React dashboard at /dashboard
-_DASHBOARD_DIST = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist")
-if os.path.isdir(_DASHBOARD_DIST):
-    app.mount("/dashboard", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
-
-# Serve landing page at /
-_WEBPAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "webpage")
-if os.path.isdir(_WEBPAGE_DIR):
-    app.mount("/", StaticFiles(directory=_WEBPAGE_DIR, html=True), name="webpage")
 
 # Shared state (set up in lifespan)
 _redis: Optional[aioredis.Redis] = None
@@ -436,3 +426,22 @@ async def ws_logs(websocket: WebSocket):
         _ws_clients.discard(websocket)
     except Exception:
         _ws_clients.discard(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — must be mounted AFTER all API routes so the catch-all
+# "/" mount does not shadow any endpoint.
+# ---------------------------------------------------------------------------
+
+@app.get("/dashboard")
+async def dashboard_redirect():
+    return RedirectResponse(url="/dashboard/")
+
+
+_DASHBOARD_DIST = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist")
+if os.path.isdir(_DASHBOARD_DIST):
+    app.mount("/dashboard", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+
+_WEBPAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "webpage")
+if os.path.isdir(_WEBPAGE_DIR):
+    app.mount("/", StaticFiles(directory=_WEBPAGE_DIR, html=True), name="webpage")

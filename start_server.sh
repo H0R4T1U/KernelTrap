@@ -4,14 +4,30 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-# Activate Python virtual environment
-source .venv/bin/activate
-
 MODEL_DIR="${MODEL_DIR:-masina_invata/isolation_forest/beth_iforest_model_host2tier}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
 # ---------------------------------------------------------------------------
-# 1. Redis
+# 1. Python virtual environment + dependencies
+# ---------------------------------------------------------------------------
+echo "[*] Setting up Python environment..."
+if [ ! -d "$REPO_DIR/.venv" ]; then
+  echo "    Creating .venv..."
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install -q -r central_server/requirements.txt
+
+# ---------------------------------------------------------------------------
+# 2. Dashboard (install + build, served by FastAPI at /dashboard)
+# ---------------------------------------------------------------------------
+echo "[*] Building dashboard..."
+npm --prefix "$REPO_DIR/dashboard" install --silent
+npm --prefix "$REPO_DIR/dashboard" run build --silent
+echo "    dashboard built → /dashboard"
+
+# ---------------------------------------------------------------------------
+# 3. Redis
 # ---------------------------------------------------------------------------
 echo "[*] Starting Redis..."
 if docker ps -q -f name=kerneltrap-redis | grep -q .; then
@@ -25,7 +41,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Central server (uvicorn)
+# 4. Central server (uvicorn)
 # ---------------------------------------------------------------------------
 echo "[*] Starting central server..."
 if pgrep -f "uvicorn central_server.main" > /dev/null 2>&1; then
@@ -49,21 +65,8 @@ else
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# 3. Dashboard (build React app, served by FastAPI at /dashboard)
-# ---------------------------------------------------------------------------
-echo "[*] Building dashboard..."
-if [ ! -d "$REPO_DIR/dashboard/node_modules" ]; then
-  echo "    Installing dashboard dependencies (first run)..."
-  npm --prefix "$REPO_DIR/dashboard" install --silent
-fi
-npm --prefix "$REPO_DIR/dashboard" run build --silent \
-  && echo "    dashboard built → served at /dashboard" \
-  || echo "    [!] dashboard build FAILED"
-
 echo
-echo "[*] Server running. Streaming logs (Ctrl+C stops streaming but server keeps running)."
-echo "[*] Open: http://<server-ip>:8000"
+echo "[*] Ready. http://$(hostname -I | awk '{print $1}'):8000"
 echo "[*] To stop: pkill -f uvicorn"
 echo
 tail -f logs/server.log

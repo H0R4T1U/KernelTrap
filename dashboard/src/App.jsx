@@ -5,7 +5,7 @@ import UsersTable from "./components/UsersTable";
 import PivotHistory from "./components/PivotHistory";
 import "./App.css";
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const BASE = "";
 
 export default function App() {
   const [healthy, setHealthy] = useState(null);
