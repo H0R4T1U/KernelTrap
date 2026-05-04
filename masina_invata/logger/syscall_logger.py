@@ -400,6 +400,8 @@ class RedisPublisher:
         # Verify connectivity on startup
         self._r.ping()
         print(f"[Redis] Connected to {host}:{port}, publishing to '{self._stream_key}'", file=sys.stderr)
+        self._r.xadd("kerneltrap.registrations", {"hostname": hostname, "action": "connect"}, maxlen=500, approximate=True)
+        print(f"[Redis] Registered hostname '{hostname}' on server", file=sys.stderr)
 
     def publish(self, events: List[SyscallEvent]):
         if not events:

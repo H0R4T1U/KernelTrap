@@ -100,6 +100,7 @@ async def startup():
 
     asyncio.create_task(_event_consumer_loop(), name="event-consumer")
     asyncio.create_task(_pivot_publisher_loop(), name="pivot-publisher")
+    asyncio.create_task(_registration_loop(), name="registration")
     log.info("Background tasks started")
 
 
@@ -112,6 +113,32 @@ async def shutdown():
 # ---------------------------------------------------------------------------
 # Background Task A: consume events from all agents
 # ---------------------------------------------------------------------------
+
+async def _registration_loop():
+    """
+    Listens on kerneltrap.registrations for instant agent discovery.
+    Agents publish a hello message here on startup, so we add them to
+    _stream_cursors immediately instead of waiting for the 30s polling cycle.
+    """
+    last_id = "$"
+    while True:
+        try:
+            result = await _redis.xread({"kerneltrap.registrations": last_id}, block=2000, count=10)
+            if not result:
+                continue
+            for _stream, messages in result:
+                for msg_id, fields in messages:
+                    last_id = msg_id
+                    hostname = fields.get("hostname", "")
+                    if hostname and hostname not in _stream_cursors:
+                        _stream_cursors[hostname] = "0"
+                        log.info(f"Agent registered instantly: '{hostname}'")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"Registration loop error: {e}")
+            await asyncio.sleep(1)
+
 
 async def _discover_hosts() -> List[str]:
     """Scan Redis for stream keys matching events.* to find connected agents."""
@@ -213,18 +240,26 @@ async def _pivot_publisher_loop():
             await asyncio.sleep(1)
             pending = _tracker.drain_pivots()
 
+            failed = []
             for hostname, user_id in pending:
-                command_key = f"commands.{hostname}"
-                cmd = json.dumps({"action": "pivot", "user": str(user_id)})
-                await _redis.xadd(
-                    command_key,
-                    {"data": cmd},
-                    maxlen=1000,
-                    approximate=True,
-                )
-                log.warning(
-                    f"PIVOT COMMAND sent → host='{hostname}', userId={user_id}"
-                )
+                try:
+                    command_key = f"commands.{hostname}"
+                    cmd = json.dumps({"action": "pivot", "user": str(user_id)})
+                    await _redis.xadd(
+                        command_key,
+                        {"data": cmd},
+                        maxlen=1000,
+                        approximate=True,
+                    )
+                    log.warning(
+                        f"PIVOT COMMAND sent → host='{hostname}', userId={user_id}"
+                    )
+                except Exception as e:
+                    log.error(f"Failed to send pivot for {hostname}/{user_id}: {e} — will retry")
+                    failed.append((hostname, user_id))
+
+            if failed:
+                _tracker.re_queue_pivots(failed)
 
         except asyncio.CancelledError:
             break
