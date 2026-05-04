@@ -50,32 +50,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Dashboard (Vite dev server)
+# 3. Dashboard (build React app, served by FastAPI at /dashboard)
 # ---------------------------------------------------------------------------
-echo "[*] Starting dashboard..."
-if pgrep -f "vite --port 5173" > /dev/null 2>&1; then
-  echo "    dashboard already running — skipping"
-else
-  if [ ! -d "$REPO_DIR/dashboard/node_modules" ]; then
-    echo "    Installing dashboard dependencies (first run)..."
-    npm --prefix "$REPO_DIR/dashboard" install --silent
-  fi
-  nohup npm --prefix "$REPO_DIR/dashboard" run dev -- --host 0.0.0.0 --port 5173 \
-    > logs/dashboard.log 2>&1 &
-  disown
-  sleep 2
-  if pgrep -f "vite --port 5173" > /dev/null; then
-    echo "    dashboard started → http://localhost:5173"
-  else
-    echo "    [!] dashboard FAILED to start. Last log lines:"
-    tail -10 logs/dashboard.log
-  fi
+echo "[*] Building dashboard..."
+if [ ! -d "$REPO_DIR/dashboard/node_modules" ]; then
+  echo "    Installing dashboard dependencies (first run)..."
+  npm --prefix "$REPO_DIR/dashboard" install --silent
 fi
+npm --prefix "$REPO_DIR/dashboard" run build --silent \
+  && echo "    dashboard built → served at /dashboard" \
+  || echo "    [!] dashboard build FAILED"
 
 echo
 echo "[*] Server running. Streaming logs (Ctrl+C stops streaming but server keeps running)."
-echo "[*] Dashboard:  http://localhost:5173"
-echo "[*] API:        http://localhost:8000"
-echo "[*] To stop all: pkill -f uvicorn; pkill -f 'vite --port 5173'"
+echo "[*] Open: http://<server-ip>:8000"
+echo "[*] To stop: pkill -f uvicorn"
 echo
 tail -f logs/server.log

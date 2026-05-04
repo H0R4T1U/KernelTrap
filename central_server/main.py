@@ -35,6 +35,7 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from central_server.scorer import Scorer
 from central_server.window_v3 import SlidingWindowTracker
@@ -72,6 +73,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve built React dashboard at /dashboard
+_DASHBOARD_DIST = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist")
+if os.path.isdir(_DASHBOARD_DIST):
+    app.mount("/dashboard", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+
+# Serve landing page at /
+_WEBPAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "webpage")
+if os.path.isdir(_WEBPAGE_DIR):
+    app.mount("/", StaticFiles(directory=_WEBPAGE_DIR, html=True), name="webpage")
 
 # Shared state (set up in lifespan)
 _redis: Optional[aioredis.Redis] = None
@@ -322,7 +333,7 @@ async def _ws_broadcaster_loop():
                     await ws.send_text(msg)
                 except Exception:
                     dead.add(ws)
-            _ws_clients -= dead
+            _ws_clients.difference_update(dead)
         except asyncio.CancelledError:
             break
         except Exception as e:
