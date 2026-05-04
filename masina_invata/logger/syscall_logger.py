@@ -425,8 +425,9 @@ class CommandListener(threading.Thread):
         self._r = redis_lib.Redis(host=host, port=port, decode_responses=True)
         self._stream_key = f"commands.{hostname}"
         self._pivot_script = pivot_script
-        # "$" means: only messages arriving after this thread starts
-        self._last_id = "$"
+        # "0" means: read from beginning of stream so we pick up any pivot
+        # commands that were sent while the agent was offline/restarting.
+        self._last_id = "0"
 
     def run(self):
         print(f"[CommandListener] Listening on '{self._stream_key}'", file=sys.stderr)
