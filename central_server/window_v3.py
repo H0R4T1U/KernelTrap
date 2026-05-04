@@ -189,7 +189,7 @@ class SlidingWindowTracker:
 
     def user_states(self) -> List[Dict]:
         result = []
-        for (hostname, user_id), win in self._windows.items():
+        for (hostname, user_id), win in list(self._windows.items()):
             unique_processes = len({name for _, name in win.exec_process_names})
             unique_recon = len({name for _, name in win.recon_hits})
             result.append({

@@ -1,3 +1,6 @@
+// Empty BASE on purpose: FastAPI serves the dashboard at /dashboard/ but the
+// API endpoints (/agents, /users, /pivot, /ws/logs, ...) live on the app root.
+// Relative paths resolve against window.location.origin, hitting the API directly.
 const BASE = "";
 
 export async function fetchAgents() {

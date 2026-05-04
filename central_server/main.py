@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import pwd
 import sys
 import time
 from collections import deque
@@ -88,6 +89,18 @@ _ws_clients: Set[WebSocket] = set()
 _log_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
 # hostname -> deque of event timestamps (last 60 s) for events/min calculation
 _host_event_times: Dict[str, deque] = {}
+
+
+def _uid_to_username(uid: int) -> str:
+    """Resolve a UID to a username. Falls back to str(uid) if not found.
+
+    The honeypot pivot script (Honeypot/hp_pivot_user.sh) operates on usernames,
+    not numeric UIDs, so we must resolve before publishing the command.
+    """
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except (KeyError, OSError):
+        return str(uid)
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +289,9 @@ async def _pivot_publisher_loop():
             failed = []
             for hostname, user_id, trigger in pending:
                 try:
+                    username = _uid_to_username(user_id)
                     command_key = f"commands.{hostname}"
-                    cmd = json.dumps({"action": "pivot", "user": str(user_id)})
+                    cmd = json.dumps({"action": "pivot", "user": username})
                     await _redis.xadd(
                         command_key,
                         {"data": cmd},
@@ -285,12 +299,13 @@ async def _pivot_publisher_loop():
                         approximate=True,
                     )
                     log.warning(
-                        f"PIVOT COMMAND sent → host='{hostname}', userId={user_id}, trigger={trigger}"
+                        f"PIVOT COMMAND sent → host='{hostname}', user='{username}' (uid={user_id}), trigger={trigger}"
                     )
                     _pivot_history.append({
                         "timestamp": time.time(),
                         "hostname": hostname,
                         "user_id": user_id,
+                        "username": username,
                         "trigger": trigger,
                     })
                 except Exception as e:
@@ -394,18 +409,20 @@ async def manual_pivot(hostname: str, user_id: int):
     if hostname not in _stream_cursors:
         return JSONResponse({"error": f"Unknown host: {hostname}"}, status_code=404)
 
+    username = _uid_to_username(user_id)
     command_key = f"commands.{hostname}"
-    cmd = json.dumps({"action": "pivot", "user": str(user_id)})
+    cmd = json.dumps({"action": "pivot", "user": username})
     await _redis.xadd(command_key, {"data": cmd}, maxlen=1000, approximate=True)
 
     _pivot_history.append({
         "timestamp": time.time(),
         "hostname": hostname,
         "user_id": user_id,
+        "username": username,
         "trigger": "manual",
     })
-    log.warning(f"MANUAL PIVOT sent → host='{hostname}', userId={user_id}")
-    return JSONResponse({"status": "pivot_sent", "hostname": hostname, "user_id": user_id})
+    log.warning(f"MANUAL PIVOT sent → host='{hostname}', user='{username}' (uid={user_id})")
+    return JSONResponse({"status": "pivot_sent", "hostname": hostname, "user_id": user_id, "username": username})
 
 
 @app.get("/pivot-history")
@@ -438,10 +455,14 @@ async def dashboard_redirect():
     return RedirectResponse(url="/dashboard/")
 
 
-_DASHBOARD_DIST = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist")
+_DASHBOARD_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist"))
 if os.path.isdir(_DASHBOARD_DIST):
     app.mount("/dashboard", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+else:
+    log.warning(f"Dashboard dist not found at {_DASHBOARD_DIST} — /dashboard/ will 404. Run: npm --prefix dashboard run build")
 
-_WEBPAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "webpage")
+_WEBPAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "webpage"))
 if os.path.isdir(_WEBPAGE_DIR):
     app.mount("/", StaticFiles(directory=_WEBPAGE_DIR, html=True), name="webpage")
+else:
+    log.warning(f"Webpage dir not found at {_WEBPAGE_DIR} — landing page will 404")
