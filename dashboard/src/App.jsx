@@ -41,14 +41,21 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <span className="header-brand">KernelTrap</span>
-        <span className="header-sep">|</span>
-        <span className="header-meta">
-          <span className={`status-dot ${statusDot}`} />
-          system: {statusText}
-        </span>
-        <span className="header-sep">|</span>
-        <span className="header-meta">{agentCount} agent{agentCount !== 1 ? "s" : ""}</span>
+        <a className="header-brand" href="/">
+          <div className="header-logo-icon">kt</div>
+          KernelTrap
+        </a>
+        <div className="header-status">
+          <span className="header-meta">
+            <span className={`status-dot ${statusDot}`} />
+            {statusText}
+          </span>
+          <span className="header-sep">|</span>
+          <span className="header-meta">{agentCount} agent{agentCount !== 1 ? "s" : ""}</span>
+        </div>
+        <nav className="header-nav">
+          <a className="btn-nav-ghost" href="/">← Home</a>
+        </nav>
       </header>
 
       <main className="grid">

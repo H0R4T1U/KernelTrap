@@ -37,8 +37,9 @@
 
     <p>
       KernelTrap monitors Linux syscalls in real time using eBPF, scores behavior
-      with an Isolation Forest model, and automatically redirects suspicious users
-      into a honeypot environment — all without modifying a single binary.
+      with an Isolation Forest model trained on the BETH dataset, and automatically
+      redirects suspicious SSH users into a honeypot environment — all without
+      modifying a single binary.
     </p>
 
     <div class="hero-actions">
@@ -54,45 +55,48 @@
         <div class="terminal-dot red"></div>
         <div class="terminal-dot yellow"></div>
         <div class="terminal-dot green"></div>
-        <span class="terminal-title">kerneltrap — bash</span>
+        <span class="terminal-title">kerneltrap — central server log</span>
       </div>
       <div class="terminal-body">
         <div class="terminal-line">
           <span class="t-prompt">$</span>
-          <span class="t-cmd">sudo tracee --output json | python3 syscall_logger.py --score --model ./beth_iforest_model</span>
+          <span class="t-cmd">./start_server.sh</span>
         </div>
         <div class="terminal-line">
-          <span class="t-output">[INFO] Tracee eBPF probe loaded. Listening for syscall events...</span>
-        </div>
-        <div class="t-blank"></div>
-        <div class="terminal-line">
-          <span class="t-ok">[NORMAL]</span>
-          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.812 &nbsp;execve("/bin/ls") &rarr; 0</span>
+          <span class="t-output">[*] Starting Redis... kerneltrap-redis already running</span>
         </div>
         <div class="terminal-line">
-          <span class="t-ok">[NORMAL]</span>
-          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.791 &nbsp;openat("/etc/hosts") &rarr; 3</span>
-        </div>
-        <div class="terminal-line">
-          <span class="t-alert">[LOW]&nbsp;&nbsp;&nbsp;</span>
-          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.034 &nbsp;ptrace(ATTACH, pid=2048) &rarr; 0</span>
-        </div>
-        <div class="terminal-line">
-          <span class="t-warn">[HIGH]&nbsp;&nbsp;</span>
-          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.001 &nbsp;mmap(PROT_EXEC|PROT_WRITE) &rarr; 0x7f...</span>
-        </div>
-        <div class="terminal-line">
-          <span class="t-warn">[HIGH]&nbsp;&nbsp;</span>
-          <span class="t-output">&nbsp;uid=1001 (alice) &nbsp;score=0.001 &nbsp;kill(pid=1, SIGTERM) &rarr; -1</span>
+          <span class="t-output">[*] Starting central server... uvicorn started (PID 18842)</span>
         </div>
         <div class="t-blank"></div>
         <div class="terminal-line">
-          <span class="t-warn">[PIVOT]&nbsp;</span>
-          <span class="t-output">&nbsp;Threshold reached (5 high-severity in 60s). Redirecting alice &rarr; honeypot:2222</span>
+          <span class="t-ok">[INFO]</span>
+          <span class="t-output">&nbsp;Agent registered instantly: 'kali-honeypot'</span>
         </div>
         <div class="terminal-line">
-          <span class="t-ok">[TRAP]&nbsp;&nbsp;</span>
-          <span class="t-output">&nbsp;User alice now in isolated honeypot environment. Logging session...</span>
+          <span class="t-ok">[INFO]</span>
+          <span class="t-output">&nbsp;uid=1002 &nbsp;sched_process_exec &nbsp;severity=0 &nbsp;score=0.821</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-ok">[INFO]</span>
+          <span class="t-output">&nbsp;uid=1002 &nbsp;security_file_open &nbsp;severity=0 &nbsp;score=0.803</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-alert">[WARN]</span>
+          <span class="t-output">&nbsp;uid=1002 &nbsp;cap_capable &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;severity=2 &nbsp;score=0.011</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-alert">[WARN]</span>
+          <span class="t-output">&nbsp;uid=1002 &nbsp;commit_creds &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;severity=2 &nbsp;score=0.004</span>
+        </div>
+        <div class="t-blank"></div>
+        <div class="terminal-line">
+          <span class="t-warn">[PIVOT]</span>
+          <span class="t-output">&nbsp;Threshold reached (10 high-severity in 60s). host='kali-honeypot' user='attacker'</span>
+        </div>
+        <div class="terminal-line">
+          <span class="t-ok">[TRAP]&nbsp;</span>
+          <span class="t-output">&nbsp;Pivot command sent &rarr; commands.kali-honeypot. Session redirected.</span>
         </div>
       </div>
     </div>
@@ -114,37 +118,37 @@
       <div class="feature-card">
         <div class="feature-icon">&#9889;</div>
         <h3>eBPF Syscall Monitoring</h3>
-        <p>Uses Tracee (eBPF) or auditd to collect every syscall event from the Linux kernel — zero overhead, no kernel patches required.</p>
+        <p>Uses Tracee (eBPF) to collect every syscall event from the Linux kernel — zero overhead, no kernel patches, no application changes required.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">&#129302;</div>
         <h3>ML Anomaly Detection</h3>
-        <p>Isolation Forest model trained on the BETH dataset scores each event in real time. Detects behavioral anomalies, not just known signatures.</p>
+        <p>Isolation Forest model trained on the BETH honeypot dataset scores each event in real time. Detects behavioral anomalies, not just known signatures.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">&#128247;</div>
         <h3>Honeypot Pivot</h3>
-        <p>After sustained suspicious activity, the user is transparently redirected into an isolated Docker honeypot via SSH — without alerting the attacker.</p>
+        <p>After sustained high-severity activity, the SSH session is transparently redirected into an isolated Docker honeypot — without alerting the attacker.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">&#128202;</div>
-        <h3>BETH Dataset Format</h3>
-        <p>All events are transformed to a standardized 16-column CSV format compatible with the BETH dataset for model training and evaluation.</p>
+        <h3>Real-time Dashboard</h3>
+        <p>React operator dashboard with live event feed over WebSocket, per-user anomaly pressure gauges, pivot history, and manual pivot controls.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">&#128274;</div>
-        <h3>Per-user Tracking</h3>
-        <p>Anomaly windows are tracked per user with configurable thresholds. System users are automatically whitelisted to avoid false positives.</p>
+        <h3>SSH-scoped Tracking</h3>
+        <p>Only remote SSH sessions are tracked. Physical console users and background system daemons are excluded, eliminating false positives from local activity.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">&#9881;</div>
-        <h3>Systemd Integration</h3>
-        <p>Ships with a systemd service for continuous background logging. Configure once, monitor forever with journald log integration.</p>
+        <h3>Multi-agent Support</h3>
+        <p>Agents register with the central server over Redis Streams. Multiple monitored machines report to a single server with per-host isolation.</p>
       </div>
 
     </div>
@@ -168,9 +172,9 @@
         <div class="step-content">
           <h3>Collect syscall events via eBPF</h3>
           <p>
-            Tracee attaches eBPF probes to the Linux kernel and emits a JSON stream of
-            syscall events — including process ID, user ID, syscall name, arguments, and return values.
-            No application changes needed. Supports <code>tracee</code> and <code>auditd</code>.
+            Tracee runs as a Docker container with privileged access to the Linux kernel.
+            It attaches eBPF probes and emits a JSON stream of syscall events including
+            process ID, user ID, syscall name, arguments, and return values in real time.
           </p>
         </div>
       </div>
@@ -178,12 +182,12 @@
       <div class="step">
         <div class="step-num">02</div>
         <div class="step-content">
-          <h3>Transform to BETH format</h3>
+          <h3>Filter to active SSH sessions</h3>
           <p>
-            <code>syscall_logger.py</code> parses each event and normalizes it into the
-            16-column BETH dataset format, extracting features like
-            <code>mountNamespace</code>, <code>parentProcessId</code>, and <code>returnValue</code>
-            used by the model.
+            <code>syscall_logger.py</code> (the agent) checks which UIDs have an active
+            <code>pts/</code> session via <code>who</code>, refreshing every 30 seconds.
+            Only events from remote SSH users are forwarded — local users and system
+            daemons are silently dropped.
           </p>
         </div>
       </div>
@@ -191,11 +195,12 @@
       <div class="step">
         <div class="step-num">03</div>
         <div class="step-content">
-          <h3>Score with Isolation Forest</h3>
+          <h3>Stream to central server via Redis</h3>
           <p>
-            Each event is scored in real time by the trained Isolation Forest model.
-            Events are classified into three severity levels: <code>NORMAL</code>, <code>LOW</code>, and <code>HIGH</code> —
-            based on how anomalous the 7-feature vector is.
+            The agent batches events and publishes them to <code>events.{hostname}</code>
+            Redis Streams every 5 seconds. The central server subscribes to all agent
+            streams simultaneously and picks up new agents instantly via a registration
+            channel.
           </p>
         </div>
       </div>
@@ -203,11 +208,12 @@
       <div class="step">
         <div class="step-num">04</div>
         <div class="step-content">
-          <h3>Track anomaly windows per user</h3>
+          <h3>Score with Isolation Forest</h3>
           <p>
-            A sliding time window tracks how many <code>HIGH</code>-severity events a user
-            generates. If the threshold is exceeded (default: 5 events in 60 seconds),
-            an automated pivot is triggered.
+            The central server scores each event with the trained Isolation Forest model
+            (BETH dataset, 7-feature vector). Events are classified as severity 0 (normal),
+            1 (low anomaly), or 2 (high anomaly). Scores are published to
+            <code>scores.{hostname}</code> and broadcast to the dashboard over WebSocket.
           </p>
         </div>
       </div>
@@ -215,11 +221,26 @@
       <div class="step">
         <div class="step-num">05</div>
         <div class="step-content">
+          <h3>Track anomaly window per user</h3>
+          <p>
+            A 60-second sliding window counts severity-2 events per (hostname, userId) pair.
+            Once the threshold is crossed, a pivot command is published to
+            <code>commands.{hostname}</code>. The operator can also trigger a manual pivot
+            from the dashboard at any time.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">06</div>
+        <div class="step-content">
           <h3>Pivot attacker to honeypot</h3>
           <p>
-            The <code>hp_pivot_user</code> script sends SIGUSR1 to the user's shell,
-            which transparently exec's into an SSH session pointing to the Docker honeypot on
-            <code>localhost:2222</code>. The attacker continues — now in an isolated environment.
+            The agent's command listener reads the pivot command and executes
+            <code>hp_pivot_user</code>, which drops the attacker's traffic via
+            <code>iptables</code> and sends <code>SIGUSR1</code> to their shell —
+            transparently exec'ing into an SSH session pointing to the Docker honeypot
+            on <code>localhost:2222</code>.
           </p>
         </div>
       </div>
@@ -234,23 +255,27 @@
     <div class="section-label">Architecture</div>
     <h2 class="section-title">System overview</h2>
     <p class="section-sub">
-      A modular pipeline connecting the Linux kernel, an ML scoring engine,
-      and an isolated honeypot container.
+      A distributed pipeline connecting monitored Linux hosts, a central ML
+      scoring server, and an isolated honeypot container.
     </p>
 
-    <div class="arch-box"><span class="highlight">┌─────────────────┐</span>     <span class="highlight">┌──────────────────┐</span>     <span class="highlight">┌────────────────────┐</span>
-<span class="highlight">│  Tracee (eBPF)  │</span><span class="dim">────▶</span><span class="highlight">│  syscall_logger  │</span><span class="dim">────▶</span><span class="highlight">│  CSV (BETH format) │</span>
-<span class="highlight">│  or auditd      │</span>     <span class="highlight">│                  │</span>     <span class="dim">└────────────────────┘</span>
-<span class="dim">└─────────────────┘</span>     <span class="highlight">│  ┌────────────┐  │</span>     <span class="highlight">┌────────────────────┐</span>
-                        <span class="highlight">│  │ Transform  │  │</span><span class="dim">────▶</span><span class="highlight">│  Isolation Forest  │</span>
-                        <span class="highlight">│  └────────────┘  │</span>     <span class="highlight">│  (real-time score) │</span>
-                        <span class="highlight">│                  │</span>     <span class="dim">└────────────────────┘</span>
-                        <span class="highlight">│  ┌────────────┐  │</span>              <span class="dim">│</span>
-                        <span class="highlight">│  │  Scoring   │◀─┘</span>              <span class="dim">▼</span>
-                        <span class="highlight">│  └────────────┘</span>       <span class="highlight">┌────────────────────┐</span>
-                        <span class="dim">└──────────────────┘</span>    <span class="highlight">│   Honeypot Pivot   │</span>
-                                                <span class="highlight">│   Docker :2222     │</span>
-                                                <span class="dim">└────────────────────┘</span></div>
+    <div class="arch-box"><span class="dim">Monitored host                          Central server</span>
+<span class="highlight">┌──────────────────────────┐</span>             <span class="highlight">┌─────────────────────────────┐</span>
+<span class="highlight">│  Tracee (Docker/eBPF)    │</span>             <span class="highlight">│  FastAPI + uvicorn          │</span>
+<span class="highlight">│          │               │</span>             <span class="highlight">│                             │</span>
+<span class="highlight">│          ▼               │</span>  <span class="dim">Redis</span>       <span class="highlight">│  ┌───────────────────────┐  │</span>
+<span class="highlight">│  syscall_logger.py       │</span><span class="dim">──Streams──▶</span><span class="highlight">│  │  Isolation Forest     │  │</span>
+<span class="highlight">│  (SSH filter + publisher)│</span>             <span class="highlight">│  │  scorer (BETH model)  │  │</span>
+<span class="highlight">│          ▲               │</span>             <span class="highlight">│  └───────────────────────┘</span>  <span class="highlight">│</span>
+<span class="highlight">│          │               │</span>             <span class="highlight">│             │               │</span>
+<span class="highlight">│  hp_pivot_user.sh        │</span><span class="dim">◀─commands──</span><span class="highlight">│  ┌──────────────────────┐   │</span>
+<span class="highlight">│  (iptables + SIGUSR1)    │</span>             <span class="highlight">│  │  Sliding window      │   │</span>
+<span class="highlight">│          │               │</span>             <span class="highlight">│  │  tracker per user    │   │</span>
+<span class="highlight">│          ▼               │</span>             <span class="highlight">│  └──────────────────────┘  │</span>
+<span class="highlight">│  Docker honeypot :2222   │</span>             <span class="highlight">│             │               │</span>
+<span class="dim">└──────────────────────────┘</span>             <span class="highlight">│             ▼               │</span>
+                                          <span class="highlight">│  WebSocket → Dashboard      │</span>
+                                          <span class="dim">└─────────────────────────────┘</span></div>
   </section>
 
   <hr class="divider" />
@@ -267,13 +292,13 @@
       <div class="tech-pill"><span class="tech-pill-dot"></span>Linux eBPF</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>Tracee by Aqua Security</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>Python 3.8+</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>FastAPI + uvicorn</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>Redis Streams</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>scikit-learn</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>Isolation Forest</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>BETH Dataset</div>
+      <div class="tech-pill"><span class="tech-pill-dot"></span>React + Vite</div>
       <div class="tech-pill"><span class="tech-pill-dot"></span>Docker</div>
-      <div class="tech-pill"><span class="tech-pill-dot"></span>systemd</div>
-      <div class="tech-pill"><span class="tech-pill-dot"></span>auditd</div>
-      <div class="tech-pill"><span class="tech-pill-dot"></span>joblib / numpy</div>
     </div>
   </section>
 
@@ -282,7 +307,7 @@
   <footer>
     <div class="footer-left">
       <div class="nav-logo-icon" style="width:22px;height:22px;font-size:11px;">kt</div>
-      <span>KernelTrap &mdash; Academic project &copy; 2024</span>
+      <span>KernelTrap &mdash; Academic project &copy; 2025</span>
     </div>
     <ul class="footer-links">
       <li><a href="https://github.com/H0R4T1U/KernelTrap" target="_blank">GitHub</a></li>
