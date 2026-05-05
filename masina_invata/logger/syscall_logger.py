@@ -21,6 +21,7 @@ import argparse
 import csv
 import json
 import os
+import pwd
 import re
 import signal
 import subprocess
@@ -31,7 +32,7 @@ from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Iterator, Dict, Any, List, TextIO
+from typing import Optional, Iterator, Dict, Any, List, Set, TextIO
 
 # Syscall name to eventId mapping (based on BETH dataset / x86_64 Linux syscalls)
 SYSCALL_TO_ID = {
@@ -464,6 +465,29 @@ def _trigger_pivot(username: str, pivot_script: str):
         print(f"[PIVOT] Error executing pivot for '{username}': {e}", file=sys.stderr)
 
 
+def _get_ssh_uids() -> Set[int]:
+    """Return UIDs that currently have an active SSH (pts) session.
+
+    Parses `who` output; pts/* lines are SSH/network sessions.
+    tty* lines are physical console sessions and are intentionally excluded.
+    Returns an empty set if `who` fails or no SSH sessions are open.
+    """
+    uids: Set[int] = set()
+    try:
+        out = subprocess.check_output(["who"], text=True, timeout=5)
+        for line in out.splitlines():
+            parts = line.split()
+            # Format: username  pts/N  date  time  (source-host)
+            if len(parts) >= 2 and parts[1].startswith("pts/"):
+                try:
+                    uids.add(pwd.getpwnam(parts[0]).pw_uid)
+                except KeyError:
+                    pass
+    except Exception:
+        pass
+    return uids
+
+
 class SyscallLogger:
     """Orchestrates syscall collection, optional CSV output, and Redis publishing."""
 
@@ -513,6 +537,14 @@ class SyscallLogger:
         self._running = True
         self._last_flush_time: float = 0.0
         self.flush_interval: float = 5.0  # seconds
+
+        # SSH session filter — only forward events for UIDs with active SSH sessions.
+        # Refreshed every 30 s; starts populated so the first events aren't dropped.
+        self._ssh_uids: Set[int] = _get_ssh_uids()
+        self._ssh_last_refresh: float = time.monotonic()
+        self._ssh_refresh_interval: float = 30.0
+        print(f"[Agent] SSH session UIDs at startup: {self._ssh_uids or 'none'}", file=sys.stderr)
+
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
@@ -555,6 +587,10 @@ class SyscallLogger:
                     self._last_flush_time = now
                     self._print_stats()
 
+                if now - self._ssh_last_refresh >= self._ssh_refresh_interval:
+                    self._ssh_uids = _get_ssh_uids()
+                    self._ssh_last_refresh = now
+
         finally:
             self._flush_redis()
             if csv_writer:
@@ -592,7 +628,11 @@ class SyscallLogger:
     def _process_event(self, event: SyscallEvent, csv_writer: Optional[CSVWriter]):
         if csv_writer:
             csv_writer.write(event)
+        # Only forward to the server if this UID has an active SSH session.
+        # Events from local/physical users and background daemons are dropped here.
         if self._redis_publisher is not None:
+            if self._ssh_uids and event.userId not in self._ssh_uids:
+                return
             self._redis_batch.append(event)
 
     def _print_stats(self):
