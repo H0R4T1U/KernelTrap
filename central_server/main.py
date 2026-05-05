@@ -10,13 +10,13 @@ scores them with Isolation Forest, and publishes results back:
 Run:
     uvicorn central_server.main:app --host 0.0.0.0 --port 8000
 
-Environment variables (or edit CONFIG below):
+Environment variables:
     REDIS_HOST          Redis host (default: localhost)
     REDIS_PORT          Redis port (default: 6379)
     MODEL_DIR           Path to trained IF model dir
-    PIVOT_THRESHOLD     High-severity events to trigger pivot (default: 5)
+    PIVOT_THRESHOLD     Severity-2 events in window to trigger pivot (default: 5)
     PIVOT_WINDOW_SEC    Sliding window in seconds (default: 60)
-    WHITELIST_UIDS      Comma-separated UIDs to never pivot (default: 0)
+    WHITELIST_UIDS      Extra comma-separated UIDs to never pivot (beyond built-in daemon list)
     HOST_DISCOVERY_SEC  How often to scan Redis for new agent streams (default: 30)
 """
 
@@ -50,14 +50,26 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 MODEL_DIR = os.getenv("MODEL_DIR", "masina_invata/isolation_forest/beth_iforest_model_host2tier")
 PIVOT_THRESHOLD = int(os.getenv("PIVOT_THRESHOLD", "5"))
 PIVOT_WINDOW_SEC = int(os.getenv("PIVOT_WINDOW_SEC", "60"))
-WHITELIST_UIDS = set(
-    int(u) for u in os.getenv("WHITELIST_UIDS", "0").split(",") if u.strip().isdigit()
+# UIDs that are always ignored — pure system daemons with no interactive session.
+# Service accounts that are attacker targets (www-data=33, apache=48, mysql=27,
+# postgres=26, redis=999) are intentionally NOT in this list.
+_DEFAULT_SYSTEM_UIDS = (
+    # root handled by whitelist; 1-32 are kernel/init accounts
+    *range(1, 33),
+    # common noisy system daemons (distro-specific; adjust if needed)
+    65,   # kvm
+    100, 101, 102, 103, 104, 105, 106, 107, 108, 109,  # dbus, syslog, uuidd, …
+    110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+    120, 121, 122, 123, 124, 125,
+    993, 994, 995, 996, 997, 998,  # systemd-network, systemd-resolve, …
 )
+WHITELIST_UIDS: set[int] = {0}  # root
+WHITELIST_UIDS.update(_DEFAULT_SYSTEM_UIDS)
+# Allow the operator to add extra UIDs via env var
+_extra = os.getenv("WHITELIST_UIDS", "")
+WHITELIST_UIDS.update(int(u) for u in _extra.split(",") if u.strip().isdigit())
+
 HOST_DISCOVERY_SEC = int(os.getenv("HOST_DISCOVERY_SEC", "30"))
-PROCESS_DIVERSITY_THRESHOLD = int(os.getenv("PROCESS_DIVERSITY_THRESHOLD", "20"))
-EXEC_FREQUENCY_THRESHOLD = int(os.getenv("EXEC_FREQUENCY_THRESHOLD", "100"))
-LOW_SEVERITY_THRESHOLD = int(os.getenv("LOW_SEVERITY_THRESHOLD", "30"))
-RECON_BINARY_THRESHOLD = int(os.getenv("RECON_BINARY_THRESHOLD", "5"))
 
 # ---------------------------------------------------------------------------
 
@@ -122,10 +134,6 @@ async def startup():
         pivot_threshold=PIVOT_THRESHOLD,
         window_seconds=PIVOT_WINDOW_SEC,
         whitelist_uids=WHITELIST_UIDS,
-        process_diversity_threshold=PROCESS_DIVERSITY_THRESHOLD,
-        exec_frequency_threshold=EXEC_FREQUENCY_THRESHOLD,
-        low_severity_threshold=LOW_SEVERITY_THRESHOLD,
-        recon_binary_threshold=RECON_BINARY_THRESHOLD,
     )
 
     asyncio.create_task(_event_consumer_loop(), name="event-consumer")

@@ -94,7 +94,16 @@ if pgrep -f "uvicorn central_server.main:app" > /dev/null 2>&1; then
 fi
 
 mkdir -p logs
+
+# Pivot tuning — override with env vars if needed.
+# Extra UIDs to never pivot beyond the built-in system daemon blocklist.
+# Service accounts (www-data=33, apache=48, mysql=27, etc.) are tracked by default.
+: "${WHITELIST_UIDS:=}"
+: "${PIVOT_THRESHOLD:=10}"   # severity-2 events in 60 s to trigger pivot
+
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
+  WHITELIST_UIDS="$WHITELIST_UIDS" \
+  PIVOT_THRESHOLD="$PIVOT_THRESHOLD" \
   nohup uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \
   > logs/server.log 2>&1 &
 disown

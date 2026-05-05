@@ -52,7 +52,7 @@ if pgrep -f "syscall_logger.py" > /dev/null 2>&1; then
 fi
 
 mkdir -p logs
-sudo nohup bash -c "source '$REPO_DIR/.venv/bin/activate' && docker logs -f tracee \
+sudo nohup bash -c "source '$REPO_DIR/.venv/bin/activate' && docker logs --tail 0 -f tracee \
   | python '$REPO_DIR/masina_invata/logger/syscall_logger.py' \
       --source tracee \
       --redis-host '$SERVER_IP' \
