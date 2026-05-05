@@ -2,7 +2,9 @@ FROM ubuntu:22.04
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      openssh-server sudo vim tmux htop curl net-tools iproute2 lsb-release && \
+      openssh-server sudo vim tmux htop curl net-tools iproute2 lsb-release \
+      auditd python3 python3-pip && \
+    pip3 install --no-cache-dir redis && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # SSH daemon run dir
@@ -22,6 +24,20 @@ RUN sed -ri 's/#?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config &&
     sed -ri 's/#?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo 'ClientAliveInterval 60' >> /etc/ssh/sshd_config && \
     echo 'ClientAliveCountMax 3' >> /etc/ssh/sshd_config
+
+# TTY session recorder — ForceCommand wraps every login with script(1)
+RUN mkdir -p /var/log/sessions && chmod 1777 /var/log/sessions
+COPY record-session.sh /usr/local/sbin/record-session.sh
+RUN chmod +x /usr/local/sbin/record-session.sh && \
+    echo 'ForceCommand /usr/local/sbin/record-session.sh' >> /etc/ssh/sshd_config
+
+# Dynamic user provisioner (creates mirrored attacker accounts at pivot time)
+COPY provision-user.sh /usr/local/sbin/provision-user.sh
+RUN chmod +x /usr/local/sbin/provision-user.sh
+
+# In-container event forwarder (auditd → central Redis)
+COPY hp-monitor.py /usr/local/sbin/hp-monitor.py
+RUN chmod +x /usr/local/sbin/hp-monitor.py
 
 # startup script that ensures /run/sshd exists and mimics host hostname (via env)
 COPY start-sshd.sh /usr/local/sbin/start-sshd.sh

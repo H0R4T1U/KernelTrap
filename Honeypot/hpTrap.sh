@@ -13,7 +13,7 @@ if [ -n "$PS1" ]; then
       exec ssh \
         -i /etc/hptrap/hp_key \
         -o StrictHostKeyChecking=no \
-        attacker@127.0.0.1 -p 2222
+        "${USER}@127.0.0.1" -p 2222
     }
 
     # When this shell receives SIGUSR1, run hptrap_pivot()

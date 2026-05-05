@@ -14,10 +14,22 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ ! -f "$SCRIPT_DIR/hp_pivot_user.sh" ]; then
-  echo "[!] hp_pivot_user.sh not found in $SCRIPT_DIR — run install.sh from the Honeypot/ directory." >&2
-  exit 1
-fi
+REQUIRED_FILES=(
+  hp_pivot_user.sh
+  hpTrap.sh
+  Dockerfile
+  start-sshd.sh
+  record-session.sh
+  provision-user.sh
+  hp-monitor.py
+)
+
+for f in "${REQUIRED_FILES[@]}"; do
+  if [ ! -f "$SCRIPT_DIR/$f" ]; then
+    echo "[!] $f not found in $SCRIPT_DIR" >&2
+    exit 1
+  fi
+done
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[*] Docker not found, installing docker.io..."
@@ -34,67 +46,22 @@ HP_HOSTNAME=$(hostname)
 
 HP_DIR="/opt/honeypot-ssh"
 mkdir -p "$HP_DIR"
-cd "$HP_DIR"
 
-echo "[*] Writing Dockerfile..."
+echo "[*] Copying build context to $HP_DIR..."
+cp "$SCRIPT_DIR/Dockerfile"        "$HP_DIR/Dockerfile"
+cp "$SCRIPT_DIR/start-sshd.sh"     "$HP_DIR/start-sshd.sh"
+cp "$SCRIPT_DIR/record-session.sh" "$HP_DIR/record-session.sh"
+cp "$SCRIPT_DIR/provision-user.sh" "$HP_DIR/provision-user.sh"
+cp "$SCRIPT_DIR/hp-monitor.py"     "$HP_DIR/hp-monitor.py"
 
-cat > Dockerfile << 'EOF'
-FROM ubuntu:22.04
-
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      openssh-server sudo vim tmux htop curl net-tools iproute2 lsb-release && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# SSH daemon run dir
-RUN mkdir -p /run/sshd /var/run/sshd
-
-# decoy user inside the container
-RUN useradd -ms /bin/bash attacker && \
-    echo 'attacker:Password123!' | chpasswd && \
-    usermod -aG sudo attacker
-
-# simple fake dirs
-RUN mkdir -p /opt/app /var/www/html /data && \
-    touch /opt/app/README.txt /data/log1.log
-
-# Harden sshd a bit
-RUN sed -ri 's/#?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config && \
-    sed -ri 's/#?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    echo 'ClientAliveInterval 60' >> /etc/ssh/sshd_config && \
-    echo 'ClientAliveCountMax 3' >> /etc/ssh/sshd_config
-
-COPY start-sshd.sh /usr/local/sbin/start-sshd.sh
-RUN chmod +x /usr/local/sbin/start-sshd.sh
-
-EXPOSE 22
-CMD ["/usr/local/sbin/start-sshd.sh"]
-EOF
-
-echo "[*] Writing start-sshd.sh..."
-
-cat > start-sshd.sh << 'EOF'
-#!/bin/bash
-mkdir -p /run/sshd
-
-if [ -n "$HP_HOSTNAME" ]; then
-  echo "$HP_HOSTNAME" > /etc/hostname
-  hostname "$HP_HOSTNAME"
-fi
-
-if [ -n "$HP_ISSUE" ]; then
-  printf "%b" "$HP_ISSUE" > /etc/issue
-fi
-
-if [ -n "$HP_LSB_RELEASE" ]; then
-  printf "%b" "$HP_LSB_RELEASE" > /etc/lsb-release
-fi
-
-exec /usr/sbin/sshd -D -e
-EOF
+chmod +x \
+  "$HP_DIR/start-sshd.sh" \
+  "$HP_DIR/record-session.sh" \
+  "$HP_DIR/provision-user.sh" \
+  "$HP_DIR/hp-monitor.py"
 
 echo "[*] Building Docker image ssh-honeypot:latest..."
-if ! docker build -t ssh-honeypot:latest . ; then
+if ! docker build -t ssh-honeypot:latest "$HP_DIR"; then
   echo "[!] Docker build failed." >&2
   exit 1
 fi
@@ -119,23 +86,34 @@ ISSUE_ESCAPED=$(printf '%s\n' "$ISSUE_REAL" | sed ':a;N;$!ba;s/\n/\\n/g')
 LSB_ESCAPED=$(printf '%s\n' "$LSB_REAL" | sed ':a;N;$!ba;s/\n/\\n/g')
 
 echo "[*] Starting hp-shell container on port 2222..."
+# HP_REDIS_HOST: where the central KernelTrap Redis lives.
+# Default uses Docker's host-gateway alias (requires Docker >= 20.10).
+# Override by exporting HP_REDIS_HOST before running install.sh.
+HP_REDIS_HOST="${HP_REDIS_HOST:-host.docker.internal}"
+HP_REDIS_PORT="${HP_REDIS_PORT:-6379}"
+
 docker run -d --name hp-shell \
   --network honeynet \
   -p 2222:22 \
   --restart unless-stopped \
-  --read-only \
   --tmpfs /run \
   --tmpfs /tmp \
+  --cap-add AUDIT_WRITE \
+  --cap-add AUDIT_CONTROL \
+  --add-host host.docker.internal:host-gateway \
   --hostname "$HOSTNAME_REAL" \
   -v hp_attacker_home:/home/attacker \
+  -v hp_sessions:/var/log/sessions \
   -e HP_HOSTNAME="$HP_HOSTNAME" \
   -e HP_ISSUE="$ISSUE_ESCAPED" \
   -e HP_LSB_RELEASE="$LSB_ESCAPED" \
+  -e REDIS_HOST="$HP_REDIS_HOST" \
+  -e REDIS_PORT="$HP_REDIS_PORT" \
   ssh-honeypot:latest
 
 echo "[*] Waiting for hp-shell container to be ready..."
 WAIT=0
-until docker exec hp-shell sh -c "test -S /run/sshd.pid || ss -tlnp | grep -q ':22'" 2>/dev/null; do
+until docker exec hp-shell sh -c "test -f /run/sshd.pid || ss -tlnp | grep -q ':22'" 2>/dev/null; do
   sleep 2
   WAIT=$((WAIT+2))
   if [ $WAIT -ge 30 ]; then
@@ -162,7 +140,7 @@ PUB_KEY="$(cat /etc/hptrap/hp_key.pub)"
 
 echo "[*] Installing public key into hp-shell container..."
 docker exec hp-shell sh -c "mkdir -p /home/attacker/.ssh && \
-  echo '$PUB_KEY' >> /home/attacker/.ssh/authorized_keys && \
+  printf '%s\n' '$PUB_KEY' > /home/attacker/.ssh/authorized_keys && \
   chown -R attacker:attacker /home/attacker/.ssh && \
   chmod 700 /home/attacker/.ssh && \
   chmod 600 /home/attacker/.ssh/authorized_keys"
@@ -184,24 +162,7 @@ chmod 640 /etc/hptrap/hp_key
 ############################################
 
 echo "[*] Installing /etc/profile.d/hptrap.sh..."
-
-cat > /etc/profile.d/hptrap.sh << 'EOF'
-# Honeypot pivot trap — loaded for all interactive bash shells
-if [ -n "$PS1" ] && [ -z "$HPTRAP_INITIALIZED" ]; then
-  export HPTRAP_INITIALIZED=1
-
-  hptrap_pivot() {
-    logger -t hptrap "Pivoting user $USER to honeypot (PID=$$, from $SSH_CONNECTION)"
-    exec ssh \
-      -i /etc/hptrap/hp_key \
-      -o StrictHostKeyChecking=no \
-      attacker@127.0.0.1 -p 2222
-  }
-
-  trap hptrap_pivot USR1
-fi
-EOF
-
+cp "$SCRIPT_DIR/hpTrap.sh" /etc/profile.d/hptrap.sh
 chmod 644 /etc/profile.d/hptrap.sh
 
 ############################################
@@ -209,11 +170,9 @@ chmod 644 /etc/profile.d/hptrap.sh
 ############################################
 
 echo "[*] Installing /usr/local/sbin/hp_pivot_user..."
-
 cp "$SCRIPT_DIR/hp_pivot_user.sh" /usr/local/sbin/hp_pivot_user
 chmod 755 /usr/local/sbin/hp_pivot_user
 
-# Verify installation
 if [ ! -x /usr/local/sbin/hp_pivot_user ]; then
   echo "[!] Failed to install /usr/local/sbin/hp_pivot_user" >&2
   exit 1
@@ -232,7 +191,6 @@ ALL ALL=(root) NOPASSWD: /usr/local/sbin/hp_pivot_user
 EOF
 chmod 440 "$SUDOERS_FILE"
 
-# Validate sudoers syntax
 if ! visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
   echo "[!] sudoers file syntax error — removing." >&2
   rm -f "$SUDOERS_FILE"

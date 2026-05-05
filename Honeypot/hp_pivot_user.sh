@@ -19,6 +19,13 @@ if [ -z "$PIDS" ]; then
   exit 0
 fi
 
+# Provision a matching user in the honeypot container before any pivot fires.
+# The key is copied inside the container from the attacker template — no arg needed.
+if docker ps --format '{{.Names}}' | grep -q '^hp-shell$'; then
+  echo "Provisioning user $USER_TARGET in honeypot container..."
+  docker exec hp-shell /usr/local/sbin/provision-user.sh "$USER_TARGET"
+fi
+
 for PID in $PIDS; do
   # Extract source IP from the SSH_CONNECTION env var of this specific session.
   # SSH_CONNECTION format: "client_ip client_port server_ip server_port"
