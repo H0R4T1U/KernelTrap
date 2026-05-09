@@ -32,6 +32,7 @@ import time
 from collections import deque
 from typing import Any, Dict, List, Optional, Set
 
+import numpy as np
 import redis.asyncio as aioredis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +102,12 @@ _ws_clients: Set[WebSocket] = set()
 _log_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
 # hostname -> deque of event timestamps (last 60 s) for events/min calculation
 _host_event_times: Dict[str, deque] = {}
+
+# Bounded sample of recent raw_score values from the scorer. Used by
+# /model/health to compare the live distribution of normality scores against
+# the percentiles the model was calibrated at — a cheap drift indicator.
+_RECENT_SCORE_SAMPLE_MAX = 100_000
+_recent_scores: deque = deque(maxlen=_RECENT_SCORE_SAMPLE_MAX)
 
 
 def _uid_to_username(uid: int) -> str:
@@ -265,6 +272,8 @@ async def _process_message(hostname: str, fields: Dict[str, str]):
             process_name=result.get("processName", ""),
             event_name=result.get("eventName", ""),
         )
+        if "raw_score" in result:
+            _recent_scores.append(float(result["raw_score"]))
         pipe.xadd(
             score_stream_key,
             {"data": json.dumps(result)},
@@ -437,6 +446,52 @@ async def manual_pivot(hostname: str, user_id: int):
 async def pivot_history():
     """Return pivot history, most recent first."""
     return JSONResponse({"pivots": list(reversed(_pivot_history))})
+
+
+@app.get("/model/health")
+async def model_health():
+    """Drift indicator for the loaded IsolationForest model.
+
+    Compares the live distribution of normality scores (sampled from the last
+    ~100k events) against the percentiles the model was calibrated at. If the
+    observed severity-1 hit rate is more than 3× the expected percentile, we
+    flag the model as drift-suspected — likely time to retrain.
+
+    Pure observability endpoint, no auth, no side effects.
+    """
+    if not _scorer:
+        return JSONResponse({"status": "scorer-not-loaded"}, status_code=503)
+
+    sample = list(_recent_scores)
+    n = len(sample)
+    out: Dict[str, Any] = {
+        "samples": n,
+        "global_low_threshold":  _scorer._global_low,
+        "global_high_threshold": _scorer._global_high,
+        "expected_low_pct":      _scorer._meta.get("low_percentile"),
+        "expected_high_pct":     _scorer._meta.get("high_percentile"),
+        "n_features":            len(_scorer._meta.get("features", [])),
+    }
+    if n < 100:
+        out["status"] = "warming-up"
+        return JSONResponse(out)
+
+    arr = np.asarray(sample, dtype=float)
+    observed_low  = float((arr < _scorer._global_low).mean()  * 100.0)
+    observed_high = float((arr < _scorer._global_high).mean() * 100.0)
+    out["observed_low_pct"]  = observed_low
+    out["observed_high_pct"] = observed_high
+    out["score_mean"]        = float(arr.mean())
+    out["score_std"]         = float(arr.std())
+    out["score_min"]         = float(arr.min())
+    out["score_max"]         = float(arr.max())
+
+    expected_low = float(out["expected_low_pct"] or 0.0)
+    if expected_low > 0 and observed_low > expected_low * 3:
+        out["status"] = "drift-suspected"
+    else:
+        out["status"] = "ok"
+    return JSONResponse(out)
 
 
 @app.websocket("/ws/logs")

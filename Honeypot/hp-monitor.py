@@ -16,7 +16,10 @@ import redis
 
 REDIS_HOST     = os.environ.get("REDIS_HOST", "host.docker.internal")
 REDIS_PORT     = int(os.environ.get("REDIS_PORT", 6379))
-HOSTNAME       = socket.gethostname()
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD") or None
+# Prefer the explicit honeypot hostname so multiple honeypots don't collide on
+# the same Redis stream when the container hostname is generic (`hp-shell`).
+HOSTNAME       = os.environ.get("HP_HOSTNAME") or socket.gethostname()
 STREAM         = f"events.{HOSTNAME}"
 AUDIT_LOG      = "/var/log/audit/audit.log"
 FLUSH_INTERVAL = 5.0   # seconds — flush even if batch hasn't hit 50 events
@@ -52,13 +55,18 @@ def connect_redis() -> redis.Redis:
 
 
 def flush(r: redis.Redis, batch: list) -> redis.Redis:
-    """Send batch to Redis. On failure reconnect and retry once; drop only if still failing."""
+    """Send batch to Redis. On failure reconnect and retry once; drop only if still failing.
+
+    Field key MUST be "data" — central_server/main.py reads
+    ``fields.get("data", "[]")`` and silently skips anything else.
+    Previously this used "batch" so honeypot events were never scored.
+    """
     try:
-        r.xadd(STREAM, {"batch": json.dumps(batch)})
+        r.xadd(STREAM, {"data": json.dumps(batch)})
     except Exception:
         r = connect_redis()
         try:
-            r.xadd(STREAM, {"batch": json.dumps(batch)})
+            r.xadd(STREAM, {"data": json.dumps(batch)})
         except Exception:
             pass  # drop batch if Redis is still unreachable after reconnect
     return r

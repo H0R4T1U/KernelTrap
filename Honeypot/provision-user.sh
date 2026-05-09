@@ -44,10 +44,15 @@ printf 'TODO:\n- check backup server 192.168.10.50 (admin/backup2024)\n- rotate 
 
 printf '%s_backup_token_%s\n' "$USERNAME" "$(date +%s)" > "$HOME_DIR/.jenkins_token"
 
-# Add auditd watches on canary files so reads appear in the event stream
-auditctl -w "$HOME_DIR/.aws/credentials" -p r -k canary_aws   2>/dev/null || true
-auditctl -w "$HOME_DIR/.ssh/id_rsa"      -p r -k canary_ssh   2>/dev/null || true
-auditctl -w "$HOME_DIR/.env"             -p r -k canary_env   2>/dev/null || true
-auditctl -w "$HOME_DIR/notes.txt"        -p r -k canary_notes 2>/dev/null || true
+# Add auditd watches on canary files so reads appear in the event stream.
+# Keys are intentionally generic (audit_NNN) instead of canary_aws/etc — an
+# attacker running `auditctl -l` learns nothing useful from the key name.
+# We deliberately do NOT call `auditctl -e 2` here: the lock would survive
+# the script and the next pivot's provision-user would fail to register its
+# own watches. Locking is done once by start-sshd.sh after honeypot boot.
+auditctl -w "$HOME_DIR/.aws/credentials" -p r -k audit_001 2>/dev/null || true
+auditctl -w "$HOME_DIR/.ssh/id_rsa"      -p r -k audit_002 2>/dev/null || true
+auditctl -w "$HOME_DIR/.env"             -p r -k audit_003 2>/dev/null || true
+auditctl -w "$HOME_DIR/notes.txt"        -p r -k audit_004 2>/dev/null || true
 
 chown -R "$USERNAME:$USERNAME" "$HOME_DIR"
