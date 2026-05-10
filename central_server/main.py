@@ -51,6 +51,11 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 MODEL_DIR = os.getenv("MODEL_DIR", "masina_invata/isolation_forest/beth_iforest_model_host2tier")
 PIVOT_THRESHOLD = int(os.getenv("PIVOT_THRESHOLD", "5"))
 PIVOT_WINDOW_SEC = int(os.getenv("PIVOT_WINDOW_SEC", "60"))
+# Rate gate: of all events the user generates in the window, what fraction
+# must be severity-2 to trigger a pivot? Default 0.30 = 30%. Distinguishes a
+# user who's busy doing real work from a user actually attacking. Lower
+# (e.g. 0.10) = more sensitive; higher (0.50) = more conservative.
+MIN_SEV2_RATE = float(os.getenv("MIN_SEV2_RATE", "0.30"))
 # UIDs that are always ignored — pure system daemons with no interactive session.
 # Service accounts that are attacker targets (www-data=33, apache=48, mysql=27,
 # postgres=26, redis=999) are intentionally NOT in this list.
@@ -110,16 +115,19 @@ _RECENT_SCORE_SAMPLE_MAX = 100_000
 _recent_scores: deque = deque(maxlen=_RECENT_SCORE_SAMPLE_MAX)
 
 
-def _uid_to_username(uid: int) -> str:
-    """Resolve a UID to a username. Falls back to str(uid) if not found.
+def _uid_to_username_hint(uid: int) -> str:
+    """Best-effort UID→username on the central server.
 
-    The honeypot pivot script (Honeypot/hp_pivot_user.sh) operates on usernames,
-    not numeric UIDs, so we must resolve before publishing the command.
+    Used ONLY as a hint in the pivot command (for human-readable logs and
+    fallback if the agent can't resolve). The agent re-resolves the UID
+    against its OWN /etc/passwd before invoking hp_pivot_user — that is the
+    authoritative mapping. Otherwise multi-host deployments where uid 1002
+    means different users on different machines silently break.
     """
     try:
         return pwd.getpwuid(uid).pw_name
     except (KeyError, OSError):
-        return str(uid)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +148,7 @@ async def startup():
     _tracker = SlidingWindowTracker(
         pivot_threshold=PIVOT_THRESHOLD,
         window_seconds=PIVOT_WINDOW_SEC,
+        min_sev2_rate=MIN_SEV2_RATE,
         whitelist_uids=WHITELIST_UIDS,
     )
 
@@ -306,9 +315,11 @@ async def _pivot_publisher_loop():
             failed = []
             for hostname, user_id, trigger in pending:
                 try:
-                    username = _uid_to_username(user_id)
+                    username_hint = _uid_to_username_hint(user_id)
                     command_key = f"commands.{hostname}"
-                    cmd = json.dumps({"action": "pivot", "user": username})
+                    # Send UID as the authoritative identifier; username is just
+                    # a hint for logs / fallback. Agent does the real lookup.
+                    cmd = json.dumps({"action": "pivot", "uid": user_id, "user": username_hint})
                     await _redis.xadd(
                         command_key,
                         {"data": cmd},
@@ -316,13 +327,14 @@ async def _pivot_publisher_loop():
                         approximate=True,
                     )
                     log.warning(
-                        f"PIVOT COMMAND sent → host='{hostname}', user='{username}' (uid={user_id}), trigger={trigger}"
+                        f"PIVOT COMMAND sent → host='{hostname}', uid={user_id} "
+                        f"(server-side hint='{username_hint}'), trigger={trigger}"
                     )
                     _pivot_history.append({
                         "timestamp": time.time(),
                         "hostname": hostname,
                         "user_id": user_id,
-                        "username": username,
+                        "username": username_hint,
                         "trigger": trigger,
                     })
                 except Exception as e:
@@ -426,20 +438,20 @@ async def manual_pivot(hostname: str, user_id: int):
     if hostname not in _stream_cursors:
         return JSONResponse({"error": f"Unknown host: {hostname}"}, status_code=404)
 
-    username = _uid_to_username(user_id)
+    username_hint = _uid_to_username_hint(user_id)
     command_key = f"commands.{hostname}"
-    cmd = json.dumps({"action": "pivot", "user": username})
+    cmd = json.dumps({"action": "pivot", "uid": user_id, "user": username_hint})
     await _redis.xadd(command_key, {"data": cmd}, maxlen=1000, approximate=True)
 
     _pivot_history.append({
         "timestamp": time.time(),
         "hostname": hostname,
         "user_id": user_id,
-        "username": username,
+        "username": username_hint,
         "trigger": "manual",
     })
-    log.warning(f"MANUAL PIVOT sent → host='{hostname}', user='{username}' (uid={user_id})")
-    return JSONResponse({"status": "pivot_sent", "hostname": hostname, "user_id": user_id, "username": username})
+    log.warning(f"MANUAL PIVOT sent → host='{hostname}', uid={user_id} (server-side hint='{username_hint}')")
+    return JSONResponse({"status": "pivot_sent", "hostname": hostname, "user_id": user_id, "username": username_hint})
 
 
 @app.get("/pivot-history")

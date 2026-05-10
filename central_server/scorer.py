@@ -20,6 +20,7 @@ extractor functions, or the lexicons MUST be mirrored here.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import OrderedDict, deque
 from pathlib import Path
@@ -72,6 +73,65 @@ _BASIC_RECON = frozenset({"id", "whoami", "w", "uname", "hostname", "ss", "netst
 _RECON_TOOLS = frozenset({"nmap", "masscan", "nikto", "gobuster", "dirb", "whatweb", "sqlmap", "hydra", "hashcat", "john"})
 _NETWORK_TOOLS = frozenset({"nc", "ncat", "socat", "curl", "wget", "ssh", "scp", "rsync", "ftp", "telnet", "dig", "host", "nslookup"})
 _PRIV_HELPERS = frozenset({"sudo", "su", "doas", "pkexec", "polkit", "sudoedit"})
+
+# ============================================================================
+# Distribution-shift mitigation (BETH cloud → Ubuntu desktop deployment).
+#
+# The model was trained on BETH (cloud honeypot 2021). Ubuntu desktops run a
+# stack of services BETH never saw — wireplumber, snapd, dbus brokers, gnome.
+# Their processName_freq is 0 in the trained table → maximally anomalous in
+# our encoding → spurious severity-2 fires on idle/login activity.
+#
+# Source for the lists: distilled from Tetragon and Falco production
+# allowlists (community consensus on "infrastructure noise that is not a
+# meaningful attack vector by itself").
+#
+# Two tiers:
+#  - INFRA_BENIGN: severity zeroed unconditionally. Pure infrastructure noise.
+#  - INFRA_SOFT_BENIGN: severity capped at 1. These ARE attack vectors (sshd
+#    is the front door, sudo escalates) but their syscalls during legitimate
+#    operation look anomalous to a BETH-trained model. We still want to see
+#    them in the dashboard (severity 1) but never let them auto-pivot a user
+#    on their own.
+# ============================================================================
+INFRA_BENIGN = frozenset({
+    # systemd family
+    "systemd", "systemd-logind", "systemd-journal", "systemd-journald",
+    "systemd-network", "systemd-resolve", "systemd-resolved", "systemd-udevd",
+    "systemd-tmpfiles", "systemd-timedated", "systemd-localed", "systemd-userdbd",
+    # init / kernel housekeeping
+    "init", "kthreadd", "ksoftirqd", "migration", "rcu_sched", "kworker",
+    # dbus + desktop
+    "dbus-daemon", "dbus-broker", "dbus-broker-lau",
+    "wireplumber", "pipewire", "pipewire-pulse", "pulseaudio",
+    "gnome-shell", "gnome-session", "gdm", "gdm3",
+    "Xorg", "Xwayland", "evolution-calend", "evolution-source-",
+    # snap / packaging
+    "snapd", "snap", "snap-confine", "apt", "dpkg", "unattended-upgr",
+    # tty / login infra
+    "agetty", "getty", "login",
+    # network managers
+    "NetworkManager", "wpa_supplicant", "avahi-daemon", "dhclient",
+    # secret agents
+    "ssh-agent", "gpg-agent", "polkitd",
+    # docker host
+    "containerd", "containerd-shim", "dockerd",
+    # eBPF probe itself
+    "tracee",
+    # bash startup helpers
+    "clear_console", "dircolors", "lesspipe", "lesspipe.sh",
+    # update-motd scripts
+    "10-uname", "20-updates", "50-motd-news", "00-header", "10-help-text",
+    "50-landscape-sysinfo", "80-livepatch", "85-fwupd", "90-updates-available",
+    "91-release-upgrade", "95-hwe-eol",
+    # logrotate / cron
+    "udisksd", "thermald", "rsyslogd", "cron", "crond", "anacron", "logrotate",
+})
+
+INFRA_SOFT_BENIGN = frozenset({
+    "sshd", "sudo", "su", "doas", "pkexec", "sudoedit",
+    "run-parts", "env", "pam_unix",
+})
 
 _SENSITIVE_PATH_RE = re.compile(r"/etc/(shadow|passwd|sudoers|gshadow)|/root/|/\.ssh/|/\.aws/|\.bash_history|/\.docker/")
 _CANARY_PATH_RE    = re.compile(r"\.aws/credentials|\.ssh/id_rsa|\.env\b|notes\.txt|\.jenkins_token")
@@ -205,9 +265,12 @@ class Scorer:
                 self._meta = json.load(f)
 
         # Global fallback thresholds (used when per-entity thresholds are absent).
+        # Tunable via env vars OVERRIDE_LOW_THRESHOLD / OVERRIDE_HIGH_THRESHOLD —
+        # avoids retraining when the live distribution differs from the BETH
+        # validation set (literature confirms this is necessary for production).
         gt = self._meta.get("global_thresholds", {})
-        self._global_low = float(gt.get("low", -0.02))
-        self._global_high = float(gt.get("high", -0.10))
+        self._global_low = float(os.getenv("OVERRIDE_LOW_THRESHOLD", gt.get("low", -0.02)))
+        self._global_high = float(os.getenv("OVERRIDE_HIGH_THRESHOLD", gt.get("high", -0.10)))
 
         # Per-entity thresholds keyed by str(entity).
         self._entity_thresholds: Dict[str, Dict[str, float]] = self._meta.get("thresholds", {})
@@ -313,7 +376,20 @@ class Scorer:
             else:
                 severity = 0
 
-            results.append({
+            # Distribution-shift mitigation: cap severity for processes that
+            # are pure infrastructure noise on a desktop Linux but unseen by
+            # BETH-trained model. Applied AFTER raw scoring so the dashboard
+            # still shows the underlying anomaly score (useful for drift obs.)
+            proc_name = (event.get("processName") or "").lower()
+            severity_capped_at: Optional[int] = None
+            if proc_name in INFRA_BENIGN:
+                severity = 0
+                severity_capped_at = 0
+            elif proc_name in INFRA_SOFT_BENIGN and severity > 1:
+                severity = 1
+                severity_capped_at = 1
+
+            result = {
                 "raw_score": raw,
                 "severity": severity,
                 "is_anomaly": severity > 0,
@@ -321,6 +397,9 @@ class Scorer:
                 "processName": event.get("processName", ""),
                 "eventName": event.get("eventName", ""),
                 "hostname": hostname,
-            })
+            }
+            if severity_capped_at is not None:
+                result["severity_capped_at"] = severity_capped_at
+            results.append(result)
 
         return results
