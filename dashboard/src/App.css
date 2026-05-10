@@ -285,12 +285,31 @@ a { color: inherit; text-decoration: none; }
 .users-table tr:hover td { background: var(--bg-card); }
 .row-pivoted td { color: var(--text-dim); }
 
+/* Row where BOTH pivot gates (count + rate) are armed but pivot has not yet
+   fired. Gives the operator a heads-up that this user is on the verge. */
+.row-armed td { background: rgba(239, 68, 68, 0.06); }
+
 /* ── Gauge ── */
+.gauge-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .gauge-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 160px;
+  min-width: 200px;
+}
+
+.gauge-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  width: 32px;
+  flex-shrink: 0;
 }
 
 .gauge-track {

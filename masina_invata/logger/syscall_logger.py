@@ -29,9 +29,8 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Iterator, Dict, Any, List, Set, TextIO
 
 # Syscall name to eventId mapping (based on BETH dataset / x86_64 Linux syscalls)

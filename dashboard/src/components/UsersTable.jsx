@@ -1,15 +1,40 @@
 import { useEffect, useState } from "react";
 import { fetchUsers, triggerPivot } from "../api";
 
-function Gauge({ count, threshold }) {
+// Pivot trigger requires BOTH gates to pass:
+//   - count >= severity2_threshold (absolute floor)
+//   - severity2_rate >= min_severity2_rate (rate gate vs total events)
+
+function CountGauge({ count, threshold }) {
   const pct = Math.min((count / threshold) * 100, 100);
   const cls = pct >= 100 ? "gauge-full" : pct >= 70 ? "gauge-warn" : "gauge-ok";
   return (
-    <div className="gauge-wrap" title={`${count}/${threshold} severity-2 events`}>
+    <div className="gauge-wrap" title={`Count gate: ${count}/${threshold} severity-2 events (floor)`}>
+      <span className="gauge-label">cnt</span>
       <div className="gauge-track">
         <div className={`gauge-fill ${cls}`} style={{ width: `${pct}%` }} />
       </div>
       <span className="gauge-num dim">{count}/{threshold}</span>
+    </div>
+  );
+}
+
+function RateGauge({ rate, minRate, total }) {
+  const ratePct = (rate ?? 0) * 100;
+  const minPct = (minRate ?? 0) * 100;
+  const fillPct = Math.min((ratePct / Math.max(minPct, 0.01)) * 100, 100);
+  const cls = fillPct >= 100 ? "gauge-full" : fillPct >= 70 ? "gauge-warn" : "gauge-ok";
+  const ratio = total > 0 ? `${ratePct.toFixed(0)}%` : "—";
+  return (
+    <div
+      className="gauge-wrap"
+      title={`Rate gate: ${ratePct.toFixed(1)}% / ${minPct.toFixed(0)}% (${total} total events in window)`}
+    >
+      <span className="gauge-label">rate</span>
+      <div className="gauge-track">
+        <div className={`gauge-fill ${cls}`} style={{ width: `${fillPct}%` }} />
+      </div>
+      <span className="gauge-num dim">{ratio}/{minPct.toFixed(0)}%</span>
     </div>
   );
 }
@@ -61,35 +86,49 @@ export default function UsersTable() {
               <tr>
                 <th>Host</th>
                 <th>UID</th>
-                <th>Anomaly pressure (60 s window)</th>
+                <th>Anomaly pressure (60 s window — both gates required)</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={`${u.hostname}-${u.user_id}`} className={u.pivoted ? "row-pivoted" : ""}>
-                  <td>{u.hostname}</td>
-                  <td>{u.user_id}</td>
-                  <td>
-                    <Gauge
-                      count={u.window.severity2_count ?? 0}
-                      threshold={u.window.severity2_threshold ?? 1}
-                    />
-                  </td>
-                  <td>
-                    {u.pivoted ? (
-                      <span className="badge-pivoted">PIVOTED</span>
-                    ) : (
-                      <button
-                        className="btn-pivot"
-                        onClick={() => handlePivot(u.hostname, u.user_id)}
-                      >
-                        PIVOT
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {users.map((u) => {
+                const w = u.window || {};
+                const count = w.severity2_count ?? 0;
+                const total = w.total_count ?? 0;
+                const rate = w.severity2_rate ?? 0;
+                const threshold = w.severity2_threshold ?? 1;
+                const minRate = w.min_severity2_rate ?? 0.30;
+                const countOk = count >= threshold;
+                const rateOk = rate >= minRate;
+                const bothGates = countOk && rateOk;
+                return (
+                  <tr
+                    key={`${u.hostname}-${u.user_id}`}
+                    className={u.pivoted ? "row-pivoted" : (bothGates ? "row-armed" : "")}
+                  >
+                    <td>{u.hostname}</td>
+                    <td>{u.user_id}</td>
+                    <td>
+                      <div className="gauge-stack">
+                        <CountGauge count={count} threshold={threshold} />
+                        <RateGauge rate={rate} minRate={minRate} total={total} />
+                      </div>
+                    </td>
+                    <td>
+                      {u.pivoted ? (
+                        <span className="badge-pivoted">PIVOTED</span>
+                      ) : (
+                        <button
+                          className="btn-pivot"
+                          onClick={() => handlePivot(u.hostname, u.user_id)}
+                        >
+                          PIVOT
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

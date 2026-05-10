@@ -99,11 +99,15 @@ mkdir -p logs
 # Extra UIDs to never pivot beyond the built-in system daemon blocklist.
 # Service accounts (www-data=33, apache=48, mysql=27, etc.) are tracked by default.
 : "${WHITELIST_UIDS:=}"
-: "${PIVOT_THRESHOLD:=10}"   # severity-2 events in 60 s to trigger pivot
+: "${PIVOT_THRESHOLD:=5}"            # severity-2 events floor in 60s window
+: "${MIN_SEV2_RATE:=0.30}"           # rate gate: ≥30% of events in window must be sev-2
+: "${OVERRIDE_HIGH_THRESHOLD:=-0.15}" # raw-score cutoff for severity 2 (live-tuned, not BETH)
 
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
   WHITELIST_UIDS="$WHITELIST_UIDS" \
   PIVOT_THRESHOLD="$PIVOT_THRESHOLD" \
+  MIN_SEV2_RATE="$MIN_SEV2_RATE" \
+  OVERRIDE_HIGH_THRESHOLD="$OVERRIDE_HIGH_THRESHOLD" \
   nohup uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \
   > logs/server.log 2>&1 &
 disown

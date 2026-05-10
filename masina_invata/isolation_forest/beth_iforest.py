@@ -184,21 +184,11 @@ _URL_IP_RE         = re.compile(r"https?://|\b\d{1,3}(\.\d{1,3}){3}\b")
 # Helpers
 # -----------------------------
 
-def ensure_columns(df: pd.DataFrame, cols: List[str], where: str) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{where}: missing columns: {missing}. Found: {list(df.columns)}")
-
-
 def coerce_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
     out = df.copy()
     for c in cols:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     return out
-
-
-def drop_bad_rows(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
-    return df.dropna(subset=cols)
 
 
 # ============================================================================
@@ -474,22 +464,6 @@ def _read_raw_chunks(csv_path: str, chunksize: int, extra_cols: Optional[List[st
         for required in ("eventId", "mountNamespace"):
             if required in chunk.columns:
                 chunk = chunk.dropna(subset=[required])
-        yield chunk
-
-
-def read_csv_stream(
-    csv_path: str,
-    usecols: List[str],
-    chunksize: int,
-    dtype_map: Optional[Dict[str, Any]] = None,
-) -> Iterable[pd.DataFrame]:
-    for chunk in pd.read_csv(
-        csv_path,
-        usecols=usecols,
-        chunksize=chunksize,
-        dtype=dtype_map,
-        low_memory=False,
-    ):
         yield chunk
 
 

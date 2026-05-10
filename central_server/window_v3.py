@@ -24,7 +24,7 @@ Tunables (all env-var overridable in main.py — defaults shown):
 from __future__ import annotations
 
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
