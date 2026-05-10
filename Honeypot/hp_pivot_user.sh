@@ -4,7 +4,6 @@
 # the source IP of each session via iptables.
 
 IPTABLES=$(command -v iptables || echo /usr/sbin/iptables)
-CONNTRACK=$(command -v conntrack || echo /usr/sbin/conntrack)
 
 USER_TARGET="$1"
 if [ -z "$USER_TARGET" ]; then
@@ -34,18 +33,15 @@ for PID in $PIDS; do
   SRC_IP=$(echo "$SSH_CONN" | awk '{print $1}')
 
   if [ -n "$SRC_IP" ]; then
-    # Drop ALL traffic from the attacker IP, not just NEW connections — a
-    # reverse shell already established needs to die, not just future SSHs.
-    if ! $IPTABLES -C INPUT -s "$SRC_IP" -j DROP 2>/dev/null; then
-      $IPTABLES -I INPUT -s "$SRC_IP" -j DROP
-      echo "Banned all traffic from $SRC_IP"
-      logger -t kerneltrap "Banned all traffic from $SRC_IP for user $USER_TARGET (PID $PID)"
+    # Block only NEW connections from this IP. Existing established sessions
+    # (including the one we're about to SIGUSR1 into the honeypot) stay alive
+    # — the SIGUSR1 trap is what relocates the attacker, not a TCP RST.
+    if ! $IPTABLES -C INPUT -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP 2>/dev/null; then
+      $IPTABLES -I INPUT -s "$SRC_IP" -m conntrack --ctstate NEW -j DROP
+      echo "Banned IP $SRC_IP from new connections (existing session preserved)"
+      logger -t kerneltrap "Banned new connections from $SRC_IP for user $USER_TARGET (PID $PID)"
     else
       echo "IP $SRC_IP already banned"
-    fi
-    # Tear down existing conntrack entries so live shells from that IP die now.
-    if [ -x "$CONNTRACK" ]; then
-      $CONNTRACK -D -s "$SRC_IP" >/dev/null 2>&1 || true
     fi
   else
     echo "Could not determine source IP for PID $PID (not an SSH session?)"
