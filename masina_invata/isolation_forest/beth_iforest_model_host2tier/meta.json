@@ -1,27 +1,199 @@
 {
   "features": [
-    "processId",
-    "parentProcessId",
-    "userId",
-    "mountNamespace",
-    "eventId",
     "argsNum",
-    "returnValue"
+    "returnValue",
+    "eventId_freq",
+    "mountNamespace_freq",
+    "args_total_length",
+    "has_sensitive_path",
+    "has_canary_path",
+    "has_path_traversal",
+    "has_shell_metachar",
+    "has_url_or_ip",
+    "processName_freq",
+    "is_shell",
+    "is_interpreter",
+    "is_basic_recon",
+    "is_recon_tool",
+    "is_network_tool",
+    "is_privileged_helper",
+    "syscall_rate_5s",
+    "unique_syscalls_5s",
+    "failed_call_ratio_5s",
+    "inter_arrival_ms",
+    "is_thread_event"
   ],
-  "host_col": null,
+  "user_col": "userId",
+  "host_col": "hostName",
+  "group_mode": "host_user",
   "low_percentile": 2.0,
   "high_percentile": 0.2,
   "thresholds": {
-    "labelled_validation_data": {
-      "low": -0.021905228785165765,
-      "high": -0.10165852278727716,
-      "n_scores": 188967
+    "ip-10-100-1-129:101": {
+      "low": -0.13124687291748485,
+      "high": -0.13143316514679482,
+      "n_scores": 86
+    },
+    "ip-10-100-1-129:100": {
+      "low": -0.143345252771132,
+      "high": -0.14341964541741853,
+      "n_scores": 22
+    },
+    "ip-10-100-1-129:0": {
+      "low": -0.03531559496870751,
+      "high": -0.1183585866879829,
+      "n_scores": 14628
+    },
+    "ip-10-100-1-129:1000": {
+      "low": -0.041492281655979416,
+      "high": -0.059311718246753006,
+      "n_scores": 264
+    },
+    "ip-10-100-1-129:103": {
+      "low": -0.07222887016101598,
+      "high": -0.07867162610189751,
+      "n_scores": 26
+    },
+    "ubuntu:0": {
+      "low": 0.048127046048878824,
+      "high": -0.0330736351813038,
+      "n_scores": 143110
+    },
+    "ip-10-100-1-165:101": {
+      "low": -0.1309857759602863,
+      "high": -0.13116703339063773,
+      "n_scores": 86
+    },
+    "ip-10-100-1-165:0": {
+      "low": -0.03322894489362842,
+      "high": -0.11924302565680613,
+      "n_scores": 15612
+    },
+    "ip-10-100-1-165:1000": {
+      "low": -0.041492281655979416,
+      "high": -0.05925735221750384,
+      "n_scores": 264
+    },
+    "ip-10-100-1-165:103": {
+      "low": -0.07048155890860691,
+      "high": -0.0784968949766566,
+      "n_scores": 26
+    },
+    "ubuntu:102": {
+      "low": -0.144978628638475,
+      "high": -0.1451586532695239,
+      "n_scores": 186
+    },
+    "ip-10-100-1-169:0": {
+      "low": -0.030032141403930877,
+      "high": -0.11857173784389974,
+      "n_scores": 14275
+    },
+    "ip-10-100-1-169:1000": {
+      "low": -0.0437546734394163,
+      "high": -0.05936559424837049,
+      "n_scores": 249
+    },
+    "ip-10-100-1-169:103": {
+      "low": -0.08016324903367336,
+      "high": -0.08017456835873131,
+      "n_scores": 3
+    },
+    "ip-10-100-1-169:101": {
+      "low": -0.13116703339063773,
+      "high": -0.13138792274824812,
+      "n_scores": 86
+    },
+    "ip-10-100-1-165:100": {
+      "low": -0.14340446114585065,
+      "high": -0.14400286350536812,
+      "n_scores": 22
+    },
+    "ip-10-100-1-169:100": {
+      "low": -0.14254989204774585,
+      "high": -0.1428908302116615,
+      "n_scores": 22
     }
   },
   "global_thresholds": {
-    "low": -0.021905228785165765,
-    "high": -0.10165852278727716,
+    "low": 0.00868757378852103,
+    "high": -0.08467388690930909,
     "n_scores": 188967
   },
-  "notes": "normality_score = IsolationForest.decision_function (higher is more normal). severity tiers are based on per-host score percentiles computed on validation set."
+  "eventId_freq_table": {
+    "21": 9.57289797907307,
+    "1003": 9.192787212728593,
+    "62": 7.9441374911141125,
+    "1005": 11.90845470878725,
+    "257": 12.252154383317178,
+    "5": 11.28929429478926,
+    "3": 12.291598753386825,
+    "6": 8.820551743253025,
+    "91": 4.204692619390966,
+    "217": 8.711443319075466,
+    "1006": 5.278114659230518,
+    "87": 7.498869733976931,
+    "56": 7.164720378771857,
+    "157": 7.221105098182496,
+    "292": 3.044522437723423,
+    "41": 8.69483715865908,
+    "42": 8.183676582620658,
+    "33": 7.779048644925556,
+    "59": 6.342121418721152,
+    "1004": 6.354370040797351,
+    "4": 10.64108214783137,
+    "288": 6.650279048587422,
+    "263": 6.0473721790462776,
+    "166": 1.6094379124341003,
+    "1010": 7.226936018493289,
+    "51": 7.744569809354496,
+    "88": 1.9459101490553132,
+    "49": 6.74993119378857,
+    "106": 5.147494476813453,
+    "105": 5.147494476813453,
+    "43": 5.181783550292085,
+    "32": 5.872117789475416
+  },
+  "mountNamespace_freq_table": {
+    "4026532288": 6.401917196727186,
+    "4026531840": 13.246815679535556,
+    "4026532232": 8.131236549696116,
+    "4026532231": 7.014814351275545,
+    "4026532229": 7.097548850614793,
+    "4026532217": 12.151051358172442
+  },
+  "processName_freq_table": {
+    "systemd-logind": 6.401917196727186,
+    "systemd": 9.700085352130934,
+    "systemd-journal": 9.924368030115483,
+    "dbus-daemon": 2.4849066497880004,
+    "(time-dir)": 6.555356891810665,
+    "systemd-user-ru": 7.152268856032539,
+    "docker": 1.791759469228055,
+    "systemd-resolve": 8.131236549696116,
+    "dockerd": 1.791759469228055,
+    "containerd-shim": 1.791759469228055,
+    "amazon-ssm-agen": 8.486940148245216,
+    "ps": 12.914881538679742,
+    "cron": 8.314097335405807,
+    "snapd": 8.339978571990427,
+    "systemd-network": 7.014814351275545,
+    "journal-offline": 4.574710978503383,
+    "kworker/dying": 4.343805421853684,
+    "ssm-agent-worke": 6.71295620067707,
+    "packagekitd": 2.70805020110221,
+    "gdbus": 2.0794415416798357,
+    "gmain": 2.0794415416798357,
+    "(tmpfiles)": 6.9167150203536085,
+    "systemd-tmpfile": 9.473857817428666,
+    "kworker/u30:1": 1.6094379124341003,
+    "poweroff": 6.626717749249025,
+    "(sd-sync)": 6.261491684321042,
+    "kworker/u30:0": 1.0986122886681096,
+    "kworker/u30:2": 0.6931471805599453,
+    "systemd-timesyn": 7.097548850614793,
+    "systemd-udevd": 12.151051358172442,
+    "sshd": 11.426964445253123
+  },
+  "notes": "normality_score = IsolationForest.decision_function (higher is more normal). Severity tiers are per-entity percentiles on validation scores. Entity is userId or host:userId depending on group_mode. Categorical features (eventId, mountNamespace, processName) are frequency-encoded with log(1+count) computed on benign training rows."
 }
