@@ -1,0 +1,355 @@
+% ================================================================
+% Capitolul 3 -- Stadiu actual
+% Lucrare de licenta: Kernel Trap -- Sistem Inteligent de Prevenire
+% a Intruziunilor cu Componente de Honeypot si Invatare Automata
+% Autor: Banciu George-Horatiu
+% ================================================================
+
+Capitolul de față trece în revistă stadiul actual al cercetării în domeniile
+care converg în arhitectura sistemului propus, evaluează soluțiile existente
+și identifică golul pe care lucrarea de față urmărește să îl acopere. KernelTrap
+se situează la intersecția a patru direcții de cercetare active în literatura de
+specialitate din ultimii ani: monitorizarea comportamentală la nivel de kernel
+prin tehnologia eBPF, detectarea anomaliilor pe baza apelurilor de sistem prin
+metode de învățare automată nesupervizată, honeypot-urile cu interacțiune
+ridicată pentru analiza atacurilor reale și mecanismele de apărare activă
+bazate pe redirecționare transparentă a sesiunilor compromise. Pentru fiecare
+direcție sunt prezentate atât lucrările fundamentale, cât și contribuțiile
+recente (2022--2025), ale căror rezultate fundamentează deciziile de
+proiectare expuse în capitolul următor.
+
+\section{Sisteme HIDS bazate pe eBPF}
+
+Tranziția dinspre modulele de nucleu tradiționale (LKM) către programe eBPF
+reprezintă cea mai semnificativă schimbare în domeniul
+monitorizării de securitate la nivel de gazdă din ultimul deceniu.
+Soldani et al.~\cite{soldani2023ebpf} oferă cea mai cuprinzătoare analiză
+recentă a tehnologiei eBPF pentru observabilitate cloud-native și securitate
+runtime, demonstrând că suprafața redusă de atac, garanțiile statice oferite de
+verificator și costul redus de instrumentare fac din eBPF alegerea naturală
+pentru sisteme HIDS moderne.
+Hao et al.~\cite{hao2024ebpfruntime} descriu în detaliu implementarea
+runtime-ului eBPF în nucleul Linux 6.7, confirmând maturitatea ecosistemului ca
+platformă stabilă pentru produse de securitate.
+
+În spațiul soluțiilor open-source, patru proiecte domină piața:
+\textbf{Falco} (CNCF, originar de la Sysdig), care folosește eBPF pentru
+colectare și un motor de reguli declarative pentru detecție;
+\textbf{Tetragon} (Cilium/Isovalent), care diferă prin capacitatea de aplicare
+sincronă a politicilor direct în kernel space;
+\textbf{KubeArmor} (Accuknox), care exploatează BPF-LSM pentru aplicarea de
+politici de securitate;
+și \textbf{Tracee} (Aqua Security), care a fost adoptat și de KernelTrap
+pentru capacitățile sale de tracing fără configurare prealabilă pe nuclee
+diferite (CO:RE/BTF).
+Syairozi și Arizal~\cite{syairozi2025ebpfcomparative} efectuează cea mai
+recentă comparație empirică a acestor sisteme pe un set de atacuri OWASP
+Kubernetes Top~10, măsurând timpul mediu până la detecție (MTTD), rata de
+detecție, rata de fals pozitive și consumul de resurse.
+Concluzia studiului este că Tracee oferă cea mai bună acoperire a evenimentelor
+LSM și cea mai mică amprentă pe CPU dintre soluțiile testate, susținând
+alegerea făcută în cadrul prezentei lucrări.
+
+Două lucrări recente sunt deosebit de relevante pentru arhitectura KernelTrap.
+eBPF-PATROL~\cite{ebpfpatrol2025} propune un agent runtime ușor pentru
+interceptarea apelurilor de sistem și aplicarea de politici, raportând un
+overhead sub 2,5\% un punct de referință apropiat de obiectivele de
+performanță ale agentului din KernelTrap.
+CryptoGuard~\cite{cryptoguard2024}, publicat la DSN 2024, combină monitorizarea
+cu fereastră glisantă a syscall-urilor cu o rețea neuronală evaluată direct în
+kernel, atingând un overhead remarcabil de 0,06\% pe CPU.
+Aceste lucrări demonstrează fezabilitatea sistemelor HIDS de tip
+\textit{always-on} în medii de producție, însă niciuna nu integrează un
+mecanism de răspuns activ comparabil cu pivotarea propusă de KernelTrap.
+
+O contribuție notabilă este lucrarea fundamentală a lui Fournier et
+al.~\cite{fournier2021ebpf} de la Datadog, care discută în detaliu
+compromisurile dintre kprobe-uri, tracepoint-uri și hook-urile LSM, precum și
+problemele de tip TOCTOU (\textit{Time-of-Check to Time-of-Use})~ aspecte
+direct relevante pentru proiectarea agentului KernelTrap.
+
+\section{Învățare automată nesupervizată pentru detectarea intruziunilor}
+
+Limitările abordărilor supervizate aplicate la detectarea intruziunilor sunt
+bine documentate în literatură.
+Zoppi și Ceccarelli~\cite{zoppi2022unsupervised,zoppi2022stacking} argumentează 
+că modelele bazate pe semnături și clasificatorii binari
+supervizați eșuează sistematic la detectarea atacurilor zero-day, întrucât
+distribuția datelor de atac din timpul antrenării nu reflectă varietatea
+atacurilor întâlnite în producție.
+Studiul lor de pe TON\_IoT și CICIDS demonstrează că un detector nesupervizat
+(în particular Isolation Forest) păstrează o sensibilitate reală pe atacuri
+necunoscute, în timp ce clasificatorii supervizați colapsează la performanțe
+sub nivelul aleatoriu pe această clasă de scenarii.
+
+Această observație a generat o linie consistentă de cercetare bazată pe
+Isolation Forest~\cite{liu2008iforest} și variante ale acestuia.
+Studiul comparativ publicat în 2025 în jurnalul
+\textit{Computers}~\cite{oneclass2025survey} testează direct OCSVM, Autoencoder,
+VAE și Isolation Forest pe seturi de date industriale, raportând că IF oferă
+cel mai bun compromis între acuratețe, complexitate computațională și
+interpretabilitate.
+Anand et al.~\cite{anand2025iot} confirmă rezultatul pe TON\_IoT, demonstrând
+superioritatea IF față de OCSVM pe date de înaltă dimensionalitate cu
+dezechilibre puternice între clase.
+
+În domeniul specific al apelurilor de sistem, cercetarea modernă se grupează în
+jurul setului de date BETH~\cite{highnam2021beth}, introdus de Highnam et al.
+în 2021 ca prima sursă publică de evenimente de syscall colectate dintr-un
+scenariu real de honeypot în mediu cloud.
+Lakha et al.~\cite{lakha2022beth} publică în 2022 una dintre cele mai citate
+lucrări bazate pe BETH, folosind o combinație de Graph Neural Network și
+Transformer pentru detectarea anomaliilor; rezultatele lor
+($\text{AUROC} > 0{,}90$) reprezintă un punct de referință competitiv, însă cu
+costuri computaționale semnificativ mai mari decât IF.
+Highnam et al.~\cite{highnam2023adaptive} revin în 2023 cu o lucrare despre
+proiectarea experimentală adaptivă pentru colectarea de date de intruziune,
+semnalând că BETH continuă să fie întreținut activ ca resursă academică.
+
+Cea mai apropiată lucrare metodologică de KernelTrap o reprezintă studiul lui
+Atawneh et al.~\cite{atawneh2025symmetry}, publicat în 2025 în
+\textit{Symmetry}, care aplică Isolation Forest direct pe setul BETH și
+depășește performanțele de referință raportate în lucrarea originală a setului
+de date.
+Diferența esențială dintre \cite{atawneh2025symmetry} și KernelTrap este că
+primul rămâne un studiu de evaluare pe date statice, în timp ce KernelTrap
+propune un sistem complet de producție.
+Eremin~\cite{eremin2025streams} extinde această linie cu o evaluare a zece
+algoritmi de învățare pe fluxuri (incluzând variante de IF) pe setul BETH,
+confirmând fezabilitatea detecției nesupervizate în regim de streaming.
+Khan et al.~\cite{khan2025marl} explorează o direcție alternativă bazată pe
+Multi-Agent Reinforcement Learning aplicat tot pe BETH; deși rezultatele lor
+sunt promițătoare, complexitatea de antrenare și interpretabilitatea redusă fac
+abordarea improprie pentru un sistem de producție cu cerințe stricte de latență.
+
+În ceea ce privește selecția caracteristicilor pentru ML aplicat la
+syscall-uri, Mvula et al.~\cite{mvula2023embeddings} compară diferite tehnici
+de extracție a caracteristicilor (one-hot, n-grame, word embeddings) pe
+trace-uri de syscall, iar Užupis et al.~\cite{uzupis2024riskbased} introduc o
+metodă de grupare bazată pe risc care îmbunătățește acuratețea SVM cu 23,4\%.
+Aceste rezultate susțin direct alegerea făcută în KernelTrap de a extinde setul
+clasic de 7 caracteristici BETH cu derivate calculate din câmpurile
+\texttt{args}, \texttt{processName}, \texttt{timestamp} și \texttt{threadId}
+ignorate de versiunile anterioare ale modelelor BETH, ajungând la un total
+de 22 de dimensiuni proiectate să echilibreze puterea discriminativă cu costul
+computațional al evaluării.
+
+LIGHT-HIDS~\cite{lighthids2025} reprezintă o lucrare recentă (2025) deosebit
+de relevantă, propunând un cadru hibrid Deep SVDD + detecție de noutate pe
+secvențe de syscall, cu un câștig de viteză la inferență de până la 75 de ori.
+Lucrarea confirmă fezabilitatea sistemelor ML-HIDS ușoare în producție, dar nu
+integrează nici răspuns activ, nici componente de honeypot.
+
+\section{Praguri adaptive și agregare temporală}
+
+Două direcții complementare sprijină arhitectura de decizie a KernelTrap.
+Cui et al.~\cite{cui2022ueba} și Cao et al.~\cite{cao2023ueba} documentează
+fundamentarea teoretică a abordării
+\textbf{User and Entity Behavior Analytics (UEBA)}, demonstrând că pragurile
+per-entitate (calibrate individual pentru fiecare utilizator) reduc semnificativ
+rata de fals pozitive comparativ cu un prag global unic~--- o observație
+implementată direct în KernelTrap prin pragurile de severitate calibrate
+per-UID pe partiția de validare a setului BETH.
+Dani et al.~\cite{dani2016adaptive} formalizează utilizarea pragurilor adaptive
+bazate pe percentile, justificând alegerea percentilelor 2,0\% și 0,2\% pentru
+cele două niveluri de severitate.
+
+Pe direcția agregării temporale, sondajul publicat în
+\textit{PeerJ Computer Science}~\cite{streamingsurvey2025} sintetizează
+tehnicile de fereastră glisantă, aplicate la detectarea anomaliilor pe fluxuri de
+date de securitate.
+Algoritmul iForestASD~\cite{ding2024iforestasd} reprezintă una dintre primele
+formulări ale combinației Isolation Forest + fereastră glisantă în context de
+streaming, iar Yunus et al.~\cite{yunus2024sliding} extind ideea cu o serie de
+ferestre paralele care reduc rata de fals pozitive prin votare.
+Aceste contribuții susțin direct mecanismul de agregare temporală implementat
+în KernelTrap, care combină un prag absolut (cel puțin 5 evenimente de
+severitate 2 într-o fereastră de 60 de secunde) cu un prag de rată (cel puțin
+30\% din totalul evenimentelor utilizatorului în fereastră să fie de severitate
+2), reducând astfel rata de fals pozitive pe utilizatori legitimi cu activitate
+intensă.
+
+\section{Honeypot-uri SSH cu interacțiune ridicată}
+
+Honeypot-ul Cowrie rămâne, în literatura recentă, soluția de referință pentru
+capturarea atacurilor SSH.
+Lucrarea Q-Cowrie~\cite{qcowrie2026}, publicată în 2026 în
+\textit{International Journal of Information Security}, propune o variantă
+adaptivă bazată pe Q-learning, demonstrând relevanța continuă a Cowrie ca
+platformă experimentală.
+O direcție inovatoare este reprezentată de Sladić et al.~\cite{sladic2024llm}
+în lucrarea \textit{LLM in the Shell} (IEEE EuroS\&PW 2024), care integrează
+modele lingvistice mari peste arhitectura Cowrie pentru a genera răspunsuri
+shell credibile la comenzi neașteptate ale atacatorului.
+Reworr și Volkov~\cite{reworr2024llmhoneypot} aplică o abordare similară
+pentru a monitoriza specific agenți de hacking bazați pe LLM, raportând
+capturarea unor modele comportamentale distincte față de atacatorii umani.
+
+Pe direcția izolării prin containere, Iwendi et al.~\cite{iwendi2023container}
+documentează un sistem honeypot complet containerizat în cloud, iar
+HoneyFactory~\cite{honeyfactory2024} propune o arhitectură honeynet bazată pe
+containere Docker cu suport pentru orchestrare automată.
+Studiul comparativ publicat în 2025 în
+\textit{Informatics}~\cite{honeypotsurvey2025} analizează șapte honeypot-uri
+contemporane și concluzionează că, pentru scenariul SSH cu interacțiune ridicată,
+Cowrie oferă cel mai bun raport între bogăția datelor capturate și costul
+operațional.
+Aceste lucrări susțin direct alegerea făcută în KernelTrap, unde containerul
+honeypot expune un mediu Linux real izolat prin Docker, evitând complexitatea
+unei mașini virtuale dedicate.
+
+O limitare comună a tuturor acestor sisteme este însă natura lor pasivă:
+atacatorul trebuie să decidă să interacționeze cu honeypot-ul.
+Atunci când un atacator a compromis deja o gazdă legitimă printr-un cont SSH
+valid, niciunul dintre honeypot-urile descrise mai sus nu îl poate redirecționa
+acolo.
+
+\section{Apărare activă și pivotare transparentă}
+
+Lucrarea cea mai apropiată conceptual de mecanismul de pivotare al KernelTrap
+este \textit{Cyber Deception Reactive: TCP Stealth Redirection to On-Demand
+Honeypots} a lui Lopez et al.~\cite{lopez2024tcpredirection}, publicată în
+februarie 2024.
+Autorii propun un sistem care interceptează la nivel TCP conexiunile
+atacatorului și le redirecționează discret către un honeypot clonat, fără ca
+atacatorul să sesizeze tranziția.
+Diferențele de concepție față de KernelTrap sunt totuși semnificative: sistemul
+lui Lopez et al. operează pe baza unor reguli statice de detecție la nivel de
+rețea, în timp ce KernelTrap declanșează pivotarea pe baza unei decizii ML
+calibrate pe comportamentul individual al utilizatorului, observat la nivel de
+syscall, nu de pachet de rețea.
+Mai mult, KernelTrap utilizează semnalul POSIX \texttt{SIGUSR1} combinat cu
+reguli \texttt{iptables} pentru a forța reconectarea sesiunii SSH existente, în
+timp ce abordarea bazată exclusiv pe NAT a lui Lopez et al. nu poate trata
+sesiunile deja stabilite.
+
+Sondajul publicat în \textit{Computers \& Security}~\cite{deceptionsurvey2024}
+(2024) sintetizează cele mai recente tehnici de înșelăciune cibernetică,
+incluzând redirecționarea, mutarea țintelor (MTD) și deceptia bazată pe AI.
+Lucrarea identifică redirecționarea reactivă ca pe o direcție emergentă cu
+puține implementări academice complete o observație care confirmă noutatea
+contribuției KernelTrap.
+Kahlhofer și Rass~\cite{kahlhofer2024applayer} demonstrează la EuroS\&PW 2024
+fezabilitatea unei deceptii la nivel aplicativ fără modificarea aplicațiilor
+protejate, principiu reflectat în KernelTrap prin faptul că redirecționarea
+atacatorului nu necesită modificări ale daemon-ului SSH sau ale aplicațiilor
+existente pe gazda compromisă.
+
+În plus, conceptul de \textbf{honeytoken}în implementarea KernelTrap sub
+forma fișierelor canary plasate în containerul honeypot este susținut de
+lucrarea seminală a lui Bourke și Grzelak~\cite{bourke2018awstokens} (Black Hat
+Asia 2018), care demonstrează empiric o rată de declanșare de 83\% a
+token-urilor AWS scurse pe GitHub, și de sondajul recent al lui Khan et
+al.~\cite{honeytokenssurvey2024} privind honeytoken-urile în apărarea activă.
+
+\section{Sisteme integrate similare KernelTrap}
+
+Două lucrări academice publicate în 2025 abordează probleme suficient de
+similare cu KernelTrap pentru a merita o comparație directă, ele reprezentând
+cele două extremități ale spațiului soluțiilor în care se situează contribuția
+prezentă.
+
+\textbf{Atawneh et al.}~\cite{atawneh2025symmetry} (2025, \textit{Symmetry})
+propun un sistem de detectare a intruziunilor bazat pe Isolation Forest antrenat
+pe setul BETH, integrat cu un honeypot pentru colectarea datelor.
+Diferențele de design față de KernelTrap sunt următoarele: lucrarea citată
+folosește honeypot-ul exclusiv ca sursă de date pentru antrenarea modelului, nu
+ca mecanism de răspuns activ; nu implementează agregare temporală cu fereastră
+glisantă; nu propune un mecanism de pivotare dinamică; și nu funcționează ca
+sistem de producție distribuit cu mai mulți agenți.
+Cu toate acestea, valoarea AUROC raportată (0,87) constituie un punct de
+referință direct comparabil pentru evaluarea modelului de detecție al
+KernelTrap.
+
+\textbf{Satpute et al.}~\cite{satpute2025aidriven} (2025,
+\textit{ICCK Transactions on Cybersecurity}) descriu un sistem de detectare a
+intruziunilor bazat pe Random Forest și Autoencoder antrenate pe date colectate
+dintr-un honeypot SSH (Cowrie).
+Abordarea lor este parțial supervizată folosește etichete binare extrase
+din log-urile honeypot-ului și nu acoperă scenariul detectării atacatorilor
+pe sisteme legitime, ci doar analizează atacatori care au ales să se conecteze
+deja la honeypot.
+KernelTrap inversează această logică: detectarea are loc pe gazda reală, iar
+honeypot-ul este destinația pivotării, nu sursa observațiilor primare.
+
+O lucrare aflată la jumătatea drumului dintre cele două este
+\textit{AI-Powered Intrusion Detection System with Honeypot
+Integration}~\cite{aipoweredids2025}, care combină detectarea ML cu un honeypot
+de tip Cowrie într-un cadru integrat, fără însă a aborda mecanismul de pivotare
+automată.
+Sistemul rămâne o concatenare de două componente independente, fără bucla de
+feedback prezentă în KernelTrap.
+
+\section{Sinteză și poziționarea KernelTrap}
+
+Analiza literaturii recente relevă două observații importante.
+Pe de o parte, fiecare componentă individuală a KernelTrap se sprijină pe
+lucrări academice solide: monitorizarea prin eBPF/Tracee este validată
+de~\cite{soldani2023ebpf,hao2024ebpfruntime,syairozi2025ebpfcomparative,fournier2021ebpf},
+detectarea anomaliilor prin Isolation Forest pe BETH este susținută
+de~\cite{highnam2021beth,liu2008iforest,atawneh2025symmetry,eremin2025streams},
+honeypot-ul cu interacțiune ridicată Cowrie-style este analizat
+de~\cite{qcowrie2026,sladic2024llm,honeypotsurvey2025},
+iar pivotarea reactivă este pionierată de Lopez
+et al.~\cite{lopez2024tcpredirection}.
+Pe de altă parte, niciuna dintre lucrările examinate nu integrează aceste patru
+componente într-un sistem unitar.
+Tabelul~\ref{tab:cap3-comparatie} sintetizează această observație.
+
+\begin{table}[h]
+  \centering
+  \caption{Comparație între soluțiile existente și KernelTrap pe cele patru
+           dimensiuni cheie}
+  \label{tab:cap3-comparatie}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|l|c|c|c|c|}
+    \hline
+    \textbf{Sistem} & \textbf{eBPF/syscall} & \textbf{ML} &
+    \textbf{Honeypot} & \textbf{Răspuns activ} \\
+    \hline\hline
+    Falco / Tetragon / Tracee                        & Da  & Nu  & Nu      & Nu  \\
+    \hline
+    Atawneh et al.~\cite{atawneh2025symmetry}        & Da  & Da  & Parțial & Nu  \\
+    \hline
+    Satpute et al.~\cite{satpute2025aidriven}        & Nu  & Da  & Da      & Nu  \\
+    \hline
+    AI-Powered IDS~\cite{aipoweredids2025}           & Nu  & Da  & Da      & Nu  \\
+    \hline
+    Lopez et al.~\cite{lopez2024tcpredirection}      & Nu  & Nu  & Da      & Da  \\
+    \hline
+    \textbf{KernelTrap}                              & \textbf{Da} & \textbf{Da} &
+    \textbf{Da} & \textbf{Da} \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Sistemele comerciale precum Falco, Tetragon, Tracee și KubeArmor oferă
+monitorizare excelentă, dar nu includ nici detecție bazată pe ML, nici
+componente honeypot, nici răspuns activ prin pivotare.
+Lucrările academice apropiate metodologic (Atawneh 2025, Satpute 2025,
+AI-Powered IDS 2025) tratează ML-HIDS și honeypot-ul ca componente separate,
+fără bucla de feedback care unifică KernelTrap.
+Lucrarea lui Lopez et al. demonstrează fezabilitatea pivotării transparente,
+dar bazată pe reguli statice de rețea, nu pe decizie ML calibrată
+comportamental.
+
+Contribuția specifică a KernelTrap, pe care prezenta lucrare urmărește să o
+demonstreze experimental în capitolele următoare, constă în următoarea
+combinație: (1) un agent eBPF distribuit, fără stare, cu filtrare strictă pe
+sesiuni SSH active și excluderea propriei activități pentru a evita bucla de
+auto-întărire, care minimizează zgomotul și suprafața de atac; (2) un model
+Isolation Forest extins la 22 de caracteristici (incluzând derivate din
+\texttt{args}, \texttt{processName}, \texttt{timestamp} și \texttt{threadId},
+ignorate de literatura BETH anterioară), cu praguri adaptive per-(gazdă,
+utilizator) pe două niveluri de severitate, antrenat pe BETH cu hiperparametri
+ajustați specific scenariului syscall (\texttt{n\_estimators}~= 2000, percentile
+2,0\% și 0,2\%) și complementat de o listă albă de procese de infrastructură
+pentru atenuarea derivei de distribuție; (3) un mecanism de agregare prin
+fereastră glisantă cu prag dublu (cantitativ și de rată) care convertește scoruri
+zgomotoase în decizii robuste; (4) o pivotare transparentă declanșată automat
+care combină semnale POSIX, blocare \texttt{iptables} a conexiunilor noi și
+\texttt{exec} către un container honeypot Docker cu identitate oglindită,
+fără reguli NAT și fără reconectarea sesiunii SSH; și (5) un panou de control
+în timp real care permite și intervenție manuală.
+Această combinație nu apare în nicio lucrare publicată cunoscută și constituie
+principala contribuție a tezei de față.

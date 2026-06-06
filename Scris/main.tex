@@ -1,0 +1,274 @@
+\documentclass[12pt, a4paper]{report}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[romanian]{babel}
+\usepackage{geometry}
+\geometry{top=2.5cm, bottom=2.5cm, left=3cm, right=2.5cm}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{indentfirst}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,backgrounds,calc}
+
+% Stil minimal pentru listings (cod sursă)
+\definecolor{lstbg}{gray}{0.96}
+\definecolor{lstcomment}{rgb}{0.35,0.35,0.35}
+\definecolor{lstkeyword}{rgb}{0.0,0.0,0.55}
+\lstset{
+  backgroundcolor=\color{lstbg},
+  basicstyle=\ttfamily\footnotesize,
+  commentstyle=\color{lstcomment}\itshape,
+  keywordstyle=\color{lstkeyword}\bfseries,
+  numbers=none,
+  frame=single,
+  framerule=0.2pt,
+  rulecolor=\color{black!30},
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  captionpos=b,
+  belowcaptionskip=0.4em,
+  aboveskip=0.6em,
+  belowskip=0.6em,
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+}
+
+\begin{document}
+
+% ── Pagina de titlu ──────────────────────────────────────────
+\begin{titlepage}
+  \centering
+
+  \textsc{Universitatea Babeș-Bolyai Cluj-Napoca}\\
+  \textsc{Facultatea de Matematică și Informatică}\\
+  \textsc{Specializarea Informatică în Limba Română}
+
+  \vspace{5cm}
+
+  {\Large LUCRARE DE LICENȚĂ}
+
+  \vspace{1.5cm}
+
+  {\large\itshape Kernel Trap: Sistem Inteligent de Prevenire\\
+  a Intruziunilor cu Componente de Honeypot\\
+  și Învățare Automată}
+
+  \vfill
+
+  \begin{minipage}{0.45\textwidth}
+    \flushleft
+    Coordonator\\
+    Conf. Univ. Dr. \textit{Bufnea Darius Vasile}
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.45\textwidth}
+    \flushright
+    Autor\\
+    Banciu George-Horațiu
+  \end{minipage}
+
+  \vspace{2cm}
+  2026
+
+\end{titlepage}
+% ── Abstract ──────────────────────────────────────────────────
+
+\newpage
+\begin{center}
+  {\large\bfseries Abstract}
+\end{center}
+\vspace{0.5cm}
+
+Sistemele de detectare a intruziunilor bazate pe gazdă (HIDS) și honeypot-urile
+sunt două abordări complementare în apărarea cibernetică, însă utilizate izolat
+suferă de limitări semnificative: primele generează alerte fără un mecanism
+automat de răspuns, iar cele din urmă sunt pasive, întrucât un atacator care a
+compromis deja un sistem nu are niciun motiv să migreze voluntar către o
+capcană. Lucrarea de față prezintă KernelTrap, un sistem distribuit care
+integrează cele două abordări într-un singur flux automat. Sistemul
+monitorizează apelurile de sistem produse de sesiunile SSH active prin
+tehnologia eBPF, evaluează fiecare eveniment cu un model Isolation Forest
+antrenat pe setul de date BETH și, atunci când o fereastră glisantă 
+semnalează un nivel critic de anomalii, redirecționează transparent
+sesiunea atacatorului către un container Docker honeypot.
+Rezultatele experimentale pe scenarii reale de atac confirmă fezabilitatea
+abordării, cu un overhead sub 2,5\% pe CPU pe gazda monitorizată.
+
+\newpage
+% ── Cuprins ──────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ── Capitole ─────────────────────────────────────────────────
+\chapter{Introducere}
+
+Creșterea numărului de amenințări cibernetice și sofisticarea atacurilor direcționate impun soluții de securitate capabile să depășească limitele modelelor tradiționale de detecție. 
+Sistemele de detectare a intruziunilor bazate pe gazdă (\textit{Host-based Intrusion Detection Systems}, HIDS) oferă un strat de apărare cu granularitate ridicată, 
+monitorizând evenimentele produse direct pe sistemul de operare al mașinii țintă~\cite{liu2018hids}. Printre sursele de telemetrie disponibile, apelurile de sistem (\textit{syscalls}) 
+reprezintă cea mai fidelă oglindă a comportamentului proceselor, deoarece orice acțiune relevantă pentru securitate, crearea de procese, accesul la fișiere,
+comunicația prin rețea, trece obligatoriu prin această interfață. Metodele de învățare automată aplicate pe secvențe de syscall-uri depășesc abordările clasice bazate pe semnături, 
+deoarece pot detecta și atacuri necunoscute anterior (\textit{zero-day})~\cite{ring2021deep}; 
+compromisul acceptat este o rată mai mare de fals pozitive, care trebuie gestionată prin mecanisme suplimentare de agregare.
+
+O categorie complementară de apărare o constituie honeypot-urile, sisteme-capcană proiectate să atragă atacatorii într-un mediu controlat, 
+izolat de resursele reale. Abordările tradiționale de honeypot sunt însă pasive: atacatorul trebuie să ajungă la capcană din proprie inițiativă, 
+ceea ce nu se întâmplă dacă a compromis deja un sistem legitim. Lucrarea de față pornește de la această limitare și propune \textbf{KernelTrap}: 
+un sistem activ de prevenire a intruziunilor care, în momentul în care detectează un comportament anormal, redirecționează transparent sesiunea SSH a 
+atacatorului către un container honeypot dedicat, fără a-l avertiza.
+
+Bazat pe o analiză a literaturii de specialitate și a tehnologiilor disponibile, sistemul KernelTrap integrează trei niveluri funcționale:
+colectarea evenimentelor de syscall prin intermediul tehnologiei \textit{extended Berkeley Packet Filter} (eBPF) cu instrumentul Tracee, 
+analiza centralizată bazată pe algoritmul Isolation Forest antrenat pe setul de date BETH, și un mecanism de răspuns activ care combină semnale POSIX,
+containere Docker și reguli \texttt{iptables}.
+
+Lucrarea este organizată în șapte capitole, după cum urmează:
+
+- Capitolul 1 prezintă contextul problemei, motivația și contribuțiile principale ale lucrării.
+
+- Capitolul 2 introduce conceptele teoretice necesare înțelegerii sistemului: apelurile de sistem și rolul lor în securitate, 
+tehnologia eBPF și Tracee, algoritmul Isolation Forest, Redis Streams și containerizarea Docker.
+
+- Capitolul 3 analizează lucrările relevante din domeniu, acoperind HIDS bazate pe syscall-uri~\cite{liu2018hids}, 
+metode de învățare automată aplicate la detectarea intruziunilor~\cite{ring2021deep}, precum și soluțiile existente de tip honeypot și limitările acestora.
+
+- Capitolul 4 descrie arhitectura detaliată a sistemului KernelTrap: deciziile de proiectare, protocoalele de comunicație inter-componente și fluxul de date de la colectare până la răspuns.
+
+- Capitolul 5 prezintă implementarea concretă a fiecărei componente: agentul de colectare, serverul central de analiză și mecanismul de pivotare către honeypot.
+
+- Capitolul 6 prezintă evaluarea experimentală a sistemului: metrici de performanță, scenarii reale de atac cu unelte publice și limitările asumate ale domeniului de aplicabilitate.
+
+- Capitolul 7 sintetizează contribuțiile lucrării și propune direcții de extindere ulterioară a sistemului.
+
+\vspace{1em}
+În procesul de elaborare a acestei lucrări, autorul a utilizat modele lingvistice generative, în special ChatGPT și Claude Code,
+ pentru asistarea completării unor fragmente de cod, generarea unor versiuni inițiale ale codului și, ocazional, reformularea unor enunțuri pentru sporirea clarității.
+  După utilizarea acestor instrumente, conținutul a fost revizuit și editat de autor, care își asumă întreaga responsabilitate pentru forma finală și pentru conținutul tezei.
+
+\input{capitol2_aspecte_teoretice}
+
+\chapter{Stadiu actual}
+\input{capitol3_stadiu_actual}
+
+\input{capitol4_abordarea_propusa}
+
+\input{capitol5_aplicatie}
+
+\input{capitol6_evaluare}
+
+\chapter{Concluzii și direcții viitoare}
+
+Lucrarea de față a tratat problema integrării a două abordări complementare de
+apărare cibernetică (detecția intruziunilor pe gazdă și honeypot-urile) într-un
+singur sistem care detectează automat un atacator autentificat prin SSH și îl
+redirecționează transparent într-un mediu izolat. Capitolul 2 a introdus
+fundamentele teoretice necesare: apelurile de sistem ca sursă de telemetrie,
+tehnologia eBPF cu instrumentul Tracee, algoritmul Isolation Forest, magistrala
+Redis Streams și containerele Docker. Capitolul 3 a analizat stadiul actual,
+acoperind sistemele HIDS bazate pe eBPF, metodele de învățare automată
+nesupervizată aplicate la detecția intruziunilor, honeypot-urile SSH cu
+interacțiune ridicată și mecanismele de apărare activă. Pe baza analizei,
+capitolul 4 a propus arhitectura sistemului KernelTrap și a justificat fiecare
+decizie de proiectare în raport cu literatura citată. Capitolul 5 a prezentat
+implementarea celor patru componente decuplate (agent, server central, container
+honeypot, panou de control) și modul lor de comunicare prin Redis Streams.
+În fine, capitolul 6 a raportat evaluarea experimentală pe trei scenarii reale
+de atac, metricile de performanță măsurate și limitările asumate explicit.
+
+Revenind la promisiunile enunțate în introducere, lucrarea confirmă livrarea
+celor trei niveluri funcționale anunțate. Colectarea evenimentelor de syscall
+prin eBPF cu Tracee a fost concretizată în agentul descris în subsecțiunea
+\textit{Componente} a capitolului 5. Analiza centralizată cu un model Isolation
+Forest antrenat pe setul de date BETH a fost concretizată în clasa
+\texttt{Scorer} a serverului central, calibrată prin praguri obținute pe partiția
+de validare. Mecanismul de răspuns activ, adică combinația de semnal POSIX, regulă
+\texttt{iptables} și provizionare în container Docker, a fost concretizat în
+scripturile \texttt{hp\_pivot\_user.sh} și \texttt{hpTrap.sh}. Pivotarea
+transparentă, fără alertarea atacatorului, a fost demonstrată în cele trei
+scenarii reale din capitolul 6 (recon automat cu LinPEAS, stabilirea unui
+canal C2 cu Sliver, accesul la fișiere canary post-pivotare), iar ținta de
+overhead stabilită ca cerință nefuncțională (sub 2,5\% pe CPU) a fost atinsă.
+
+Limitările sistemului (atacatori APT cu unelte proprii, atacuri
+pre-autentificare, exploit-uri de kernel și vectori în afara SSH) au fost
+asumate explicit în secțiunea omonimă a capitolului 6 și nu reprezintă o
+omisiune, ci o decizie deliberată privind domeniul de aplicabilitate. KernelTrap
+nu pretinde acoperirea spectrului complet de atacuri, ci abordarea eficientă
+a unei clase bine definite: atacatorul autentificat de nivel mediu pe o gazdă
+altfel sănătoasă.
+
+Pe partea de direcții viitoare, sistemul construit reprezintă o bază solidă
+pe care se pot construi mai multe extinderi naturale, dintre care cele mai
+promițătoare sunt următoarele:
+
+\begin{enumerate}
+  \item \textbf{Detecție hibridă: semnături combinate cu comportament.}
+    Combinarea modelului Isolation Forest cu un strat de reguli declarative
+    (Sigma, YARA) ar permite acoperirea simultană a două categorii de atac:
+    cele cunoscute, capturate cu precizie ridicată de semnături, și cele
+    necunoscute sau anomale, capturate de model. Stratul de semnături poate
+    funcționa ca o cale rapidă care scurtcircuitează scoringul ML atunci când
+    un tipar cunoscut este recunoscut, reducând atât latența cât și rata de
+    fals pozitive.
+
+  \item \textbf{Honeypot configurabil per scenariu.}
+    Containerul honeypot este în prezent o imagine Ubuntu generică, cu un
+    set fix de fișiere-momeală. O extindere naturală constă în introducerea
+    de profile selectabile (server web cu fișiere de configurare Nginx
+    fictive, server de baze de date cu dumpuri SQL momeală, workstation de
+    dezvoltare cu repository-uri Git ce conțin credențiale inserate
+    intenționat), alese automat în funcție de profilul gazdei monitorizate
+    sau de comportamentul observat al atacatorului.
+
+  \item \textbf{Extindere către o suită HIPS / NIPS / EDR.}
+    KernelTrap acoperă în prezent doar stratul HIPS, axat pe gazdă. O
+    direcție de dezvoltare semnificativă ar fi adăugarea unui modul NIPS
+    (\textit{Network Intrusion Prevention System}) care să analizeze fluxul
+    de pachete dintre agenți, respectiv a unor capabilități tipice EDR
+    (\textit{Endpoint Detection and Response}) precum monitorizarea
+    integrității fișierelor critice de sistem și jurnalizarea per-proces
+    a accesului la fișiere sensibile.
+
+  \item \textbf{Corelare cross-host pentru detecția mișcării laterale.}
+    Arhitectura curentă tratează fiecare gazdă independent; un atacator
+    care pivotează succesiv prin mai multe servere generează semnale
+    separate, fără o vedere unificată. Adăugarea unui modul de corelare pe
+    serverul central, care să grupeze evenimente după identitate (cheie
+    SSH reutilizată, IP sursă, proximitate temporală), ar permite detecția
+    pattern-urilor de tip multi-step intrusion și emiterea unei comenzi de
+    pivotare simultan pe toate gazdele afectate.
+
+  \item \textbf{Integrare cu surse externe de threat intelligence.}
+    Conectarea sistemului la feed-uri publice de tip MISP sau AlienVault OTX
+    ar permite popularea automată a blocklist-urilor \texttt{iptables} cu
+    IP-uri ostile cunoscute și îmbogățirea panoului de control cu context
+    suplimentar (categoria atacatorului, campanie atribuită, indicatori
+    asociați). În plus, datele colectate în propriul honeypot ar putea fi
+    publicate înapoi în feed-uri, contribuind la ecosistemul de partajare.
+
+  \item \textbf{Honeypot augmentat cu modele lingvistice (arie de cercetare).}
+    O direcție exploratorie este utilizarea modelelor lingvistice mari (LLM)
+    pentru generarea dinamică a răspunsurilor în honeypot (ieșiri credibile
+    la \texttt{cat}, \texttt{ls} sau \texttt{ps}), făcând mediul-momeală
+    mai convingător pentru atacatorii umani. Lucrări recente, precum cea
+    a lui Sladić et al.~\cite{sladic2024llm}, explorează această direcție și
+    pot oferi un punct de plecare pentru o eventuală integrare.
+\end{enumerate}
+
+În sinteză, lucrarea de față a contribuit cu un sistem distribuit funcțional
+care demonstrează fezabilitatea integrării detecției comportamentale cu un
+răspuns activ izolant, oferind atât o platformă utilizabilă în practică pe
+gazde Linux protejate, cât și un punct de plecare concret pentru extinderile
+enumerate mai sus. KernelTrap se poziționează astfel ca o componentă
+complementară soluțiilor perimetrale și EDR-urilor enterprise, nu ca un
+înlocuitor pentru acestea.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

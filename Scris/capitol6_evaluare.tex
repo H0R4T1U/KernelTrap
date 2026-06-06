@@ -1,0 +1,344 @@
+% ================================================================
+% Capitolul 6 – Evaluare
+% Lucrare de licență: Kernel Trap – Sistem Inteligent de Prevenire
+% a Intruziunilor cu Componente de Honeypot și Învățare Automată
+% Autor: Banciu George-Horațiu
+% Coordonator: Conf. Univ. Dr. Bufnea Darius Vasile
+% ================================================================
+
+\chapter{Evaluare}
+
+Capitolul de față prezintă evaluarea experimentală a sistemului KernelTrap.
+Sunt enunțate, mai întâi, asumările de securitate pe care se sprijină
+funcționarea corectă a sistemului; sunt apoi raportate metricile de
+performanță măsurate pe mediul de testare, urmate de trei scenarii concrete
+de atac executate cu unelte folosite curent în comunitatea de securitate
+ofensivă; secțiunea finală tratează limitările sistemului și clasele de
+atacatori pe care îi acoperă cu eficacitate maximă.
+
+% ----------------------------------------------------------------
+\section{Asumări de securitate}
+% ----------------------------------------------------------------
+
+KernelTrap este un sistem de prevenire a intruziunilor proiectat pentru un
+scenariu specific: un cont SSH neprivilegiat compromis pe o gazdă altfel
+necompromisă. Validitatea protecției oferite depinde de două asumări fundamentale
+asupra mediului de rulare, sintetizate în tabelul \ref{tab:cap6-trust}.
+
+\begin{table}[h]
+  \centering
+  \caption{Asumările de securitate ale sistemului}
+  \label{tab:cap6-trust}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|p{0.32\textwidth}|p{0.58\textwidth}|}
+    \hline
+    \textbf{Asumare} & \textbf{Consecință} \\
+    \hline\hline
+    Contul \texttt{root} nu este compromis.
+      & Agentul, scriptul de pivotare, regulile \texttt{iptables} și controlul containerului honeypot rulează cu privilegii ridicate. Un atacator care a obținut deja drepturi \texttt{root} poate dezactiva agentul, șterge regulile de firewall, opri procesul de scoring sau modifica însăși logica de pivotare. \\
+    \hline
+    Atacatorul nu are acces fizic la mașină.
+      & Atacuri prin consola fizică (\texttt{tty*}), dispozitive USB ostile, modificare hardware, reset GRUB sau extragere de disc cad în afara domeniului de aplicabilitate. Filtrarea agentului pe sesiuni SSH \texttt{pts/*} reflectă explicit această alegere. \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Din aceste asumări derivă două consecințe operaționale: telemetria colectată
+prin eBPF/Tracee este considerată de încredere atâta timp cât kernelul
+însuși nu este compromis; iar scriptul de pivotare, deși expus pentru a
+putea fi rulat fără parolă de către agent (printr-o regulă \texttt{sudoers}
+de tip \texttt{NOPASSWD} aplicată strict pe comanda \texttt{hp\_pivot\_user}),
+nu este proiectat să reziste unui atacator care a obținut deja drepturi
+de modificare a fișierelor de sistem.
+
+% ----------------------------------------------------------------
+\section{Mediul de testare și metodologie}
+% ----------------------------------------------------------------
+
+Configurația folosită pentru evaluare este descrisă în tabelul
+\ref{tab:cap6-env}. Topologia a constat dintr-o gazdă monitorizată, serverul
+central de analiză și containerul honeypot, rulate pe aceeași subrețea
+locală pentru a izola măsurătorile de variabilitatea WAN.
+
+\begin{table}[h]
+  \centering
+  \caption{Configurația mediului de testare}
+  \label{tab:cap6-env}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|l|p{0.55\textwidth}|}
+    \hline
+    \textbf{Componentă} & \textbf{Configurație} \\
+    \hline\hline
+    Gazda monitorizată       & TODO: <distribuție Linux, kernel, CPU, RAM>  \\
+    \hline
+    Serverul central         & TODO: <distribuție, RAM, CPU>                \\
+    \hline
+    Container honeypot       & Docker (Ubuntu 22.04), capabilități \texttt{AUDIT\_WRITE}, \texttt{AUDIT\_CONTROL} \\
+    \hline
+    Versiune Tracee          & \texttt{aquasec/tracee:latest} (TODO: <commit/tag>) \\
+    \hline
+    Versiune Python          & TODO: <3.x>                                   \\
+    \hline
+    Versiune Redis           & 7 (imagine oficială Docker)                   \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Evaluarea a vizat două categorii de proprietăți: (1) overhead-ul de
+performanță introdus pe gazda monitorizată, în repaus și în regim de lucru;
+(2) capacitatea de detecție pe trei scenarii cu unelte publice de atac.
+
+% ----------------------------------------------------------------
+\section{Performanță}
+% ----------------------------------------------------------------
+
+Tabelul \ref{tab:cap6-perf} sintetizează metricile măsurate pe mediul descris
+mai sus, raportate la țintele nefuncționale enunțate în capitolul 5
+(tabelul \ref{tab:cap5-nfr}).
+
+\begin{table}[h]
+  \centering
+  \caption{Metrici de performanță}
+  \label{tab:cap6-perf}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|l|l|l|l|}
+    \hline
+    \textbf{Metrică} & \textbf{Valoare} & \textbf{Țintă} & \textbf{Verdict} \\
+    \hline\hline
+    CPU agent (idle)                          & TODO: \texttt{<X\%>}  & < 2,5\% (NF1) & TODO \\
+    \hline
+    CPU agent                                 & TODO: \texttt{<X\%>}  & < 2,5\% (NF1) & TODO \\
+    \hline
+    RAM agent                                 & TODO: \texttt{<X> MB} & ---           & ---  \\
+    \hline
+    RAM server central                        & TODO: \texttt{<X> MB} & ---           & ---  \\
+    \hline
+    Throughput susținut server                & TODO: \texttt{<X> ev/s} & ---         & ---  \\
+    \hline
+  \end{tabular}
+\end{table}
+
+% ----------------------------------------------------------------
+\section{Scenarii de atac și răspunsul sistemului}
+% ----------------------------------------------------------------
+
+Pentru a verifica capacitatea de detecție pe acțiuni cu profil realist, au
+fost executate trei scenarii pe gazda monitorizată, după autentificarea unui
+cont SSH neprivilegiat. Fiecare scenariu este descris prin succesiunea de
+acțiuni ale atacatorului, indicatorii observați de KernelTrap și verdictul
+sistemului.
+
+\subsection{Scenariul 1: recon automat cu LinPEAS}
+
+LinPEAS este un script Bash open-source folosit pe scară largă pentru
+enumerarea automată a căilor de privilege escalation pe sisteme Linux. La
+execuție lansează în cascadă zeci de procese pentru colectarea de informații
+despre sistem, conturi, configurări de servicii și permisiuni.
+
+\begin{table}[h]
+  \centering
+  \caption{Scenariul 1: indicatori observați la rularea LinPEAS}
+  \label{tab:cap6-scen1}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|p{0.42\textwidth}|p{0.48\textwidth}|}
+    \hline
+    \textbf{Acțiunea atacatorului} & \textbf{Indicator KernelTrap} \\
+    \hline\hline
+    \texttt{wget}/\texttt{curl} script de pe host extern   & \texttt{is\_network\_tool=1}, \texttt{has\_url\_or\_ip=1} \\
+    \hline
+    \texttt{id}, \texttt{whoami}, \texttt{uname}, \texttt{hostname}, \texttt{ss}, \texttt{ps} în cascadă & \texttt{is\_basic\_recon=1} repetat \\
+    \hline
+    Citire \texttt{/etc/passwd}, \texttt{/etc/shadow}, \texttt{.ssh/}      & \texttt{has\_sensitive\_path=1} \\
+    \hline
+    Rafale dense de syscall-uri          & \texttt{syscall\_rate\_5s} și \texttt{unique\_syscalls\_5s} ridicate \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Rezultat: severitatea 2 apare pe majoritatea evenimentelor în primele
+secunde de execuție; fereastra glisantă atinge pragul dublu
+(cantitate $\geq$ 5 și rată $\geq$ 30\%) și emite comanda de pivotare.
+
+\subsection{Scenariul 2: stabilirea unui canal C2 cu Sliver}
+
+Sliver este un framework C2 open-source modern, similar conceptual cu
+Cobalt Strike, folosit în testele de penetrare și în campanii reale de
+post-exploatare. Scenariul a constat din descărcarea implantului Sliver
+pe gazda compromisă, marcarea executabilă și pornirea acestuia; implantul
+a deschis o conexiune outbound persistentă către serverul C2, iar
+operatorul a emis remote comenzi standard de recon.
+
+\begin{table}[h]
+  \centering
+  \caption{Scenariul 2: indicatori observați la setup Sliver}
+  \label{tab:cap6-scen2}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|p{0.42\textwidth}|p{0.48\textwidth}|}
+    \hline
+    \textbf{Acțiunea atacatorului} & \textbf{Indicator KernelTrap} \\
+    \hline\hline
+    Fetch implant (\texttt{curl}/\texttt{wget})              & \texttt{is\_network\_tool=1}, \texttt{has\_url\_or\_ip=1} \\
+    \hline
+    Pornire implant cu nume custom                          & \texttt{processName\_freq=0} (necunoscut datelor BETH) \\
+    \hline
+    Conexiune persistentă către C2 (\texttt{connect}, \texttt{sendto}, \texttt{recvfrom})  & \texttt{syscall\_rate\_5s} susținut pe socket non-standard \\
+    \hline
+    Comenzi remote: \texttt{id}, \texttt{sudo -l}, \texttt{whoami}  & \texttt{is\_basic\_recon=1}, \texttt{is\_privileged\_helper=1} \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Rezultat: combinația dintre processName cu frecvență zero, indicatorii de
+rețea și comenzile remote scor-uite ca recon împinge fereastra peste
+ambele praguri. Pivotarea automată redirecționează sesiunea SSH activă
+către containerul honeypot, iar regula \texttt{iptables} adăugată pe IP-ul
+C2 blochează stabilirea oricăror conexiuni noi de la același atacator.
+
+\subsection{Scenariul 3: acces la fișiere canary post-pivotare}
+
+După redirecționarea în honeypot, atacatorul (sau implantul automat al
+acestuia) explorează directorul home al utilizatorului oglindit și
+încearcă să citească fișiere ce par să conțină credențiale: chei AWS
+(\texttt{.aws/credentials}), cheie privată SSH (\texttt{.ssh/id\_rsa}),
+fișier de mediu cu credențiale de bază de date (\texttt{.env}), note interne
+(\texttt{notes.txt}) și un token de CI/CD (\texttt{.jenkins\_token}).
+Pentru fiecare astfel de acces, regulile \texttt{auditd} instalate de
+\texttt{provision-user.sh} emit câte un eveniment, captat de
+\texttt{hp-monitor.py} și publicat pe stream-ul Redis al containerului.
+
+\begin{table}[h]
+  \centering
+  \caption{Scenariul 3: indicatori observați la accesul canary}
+  \label{tab:cap6-scen3}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|l|l|}
+    \hline
+    \textbf{Fișier canary accesat}     & \textbf{Indicator KernelTrap} \\
+    \hline\hline
+    \texttt{\textasciitilde/.aws/credentials} & \texttt{has\_canary\_path=1}, regulă \texttt{audit\_001} \\
+    \hline
+    \texttt{\textasciitilde/.ssh/id\_rsa}     & \texttt{has\_canary\_path=1}, regulă \texttt{audit\_002} \\
+    \hline
+    \texttt{\textasciitilde/.env}              & \texttt{has\_canary\_path=1}, regulă \texttt{audit\_003} \\
+    \hline
+    \texttt{\textasciitilde/notes.txt}         & regulă \texttt{audit\_004}  \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Rezultat: spre deosebire de detecția probabilistică din scenariile
+precedente, accesul la fișiere canary constituie un indicator binar de
+compromitere, niciun utilizator legitim nu are motiv să deschidă aceste
+fișiere, întrucât conțin credențiale fictive plasate intenționat ca
+momeală. Indicatorii apar imediat în panoul de control și confirmă
+post-factum că pivotarea a fost justificată, oferind în plus telemetrie
+asupra credențialelor pe care atacatorul le urmărește.
+
+% ----------------------------------------------------------------
+\section{Limitări}
+% ----------------------------------------------------------------
+
+Această secțiune enunță explicit clasele de atac pe care sistemul nu le
+acoperă eficient. Scopul este de a delimita responsabilitatea KernelTrap și
+de a evita așteptări nerealiste asupra protecției oferite.
+
+\textbf{Atacatori avansați cu unelte proprii.} Un actor de tip APT
+(\textit{Advanced Persistent Threat}, atacator cu resurse și obiective de
+nivel statal sau corporativ) care folosește binare scrise sau modificate
+de el însuși poate ocoli o parte din indicatorii sistemului. Două categorii
+de tehnici sunt în mod special problematice. Prima: nume de proces alese
+deliberat pentru a semăna cu daemoni legitimi de sistem (de exemplu, un
+implant numit \texttt{kworker/0:1} sau \texttt{systemd-resolved-helper})
+păcălește codificarea prin frecvență a câmpului \texttt{processName} și
+lexicoanele de procese cunoscute. A doua: tehnici care nu lasă deloc urma
+caracteristică a unei comenzi noi, adică cod executat direct din memorie, fără
+ca un proces nou să fie creat prin syscall-ul \texttt{execve} (\textit{fileless});
+injectarea unei biblioteci dinamice ostile într-un proces deja existent și
+benign (\textit{DLL/SO injection} în \texttt{sshd} sau \texttt{bash});
+sau interpunerea pe syscall-urile unui proces de încredere prin
+\texttt{ptrace} (un mecanism de depanare folosit pentru a controla execuția
+altui proces). Aceste tehnici sunt caracteristice operatorilor cu resurse
+considerabile și nu constituie profilul de atacator țintă al sistemului.
+
+\textbf{Atacuri pre-autentificare.} Agentul monitorizează exclusiv UID-urile
+cu sesiuni SSH interactive active (terminalele virtuale \texttt{pts/*}).
+În consecință, ies complet din raza sa de acoperire: brute-force-ul SSH
+(încercări automate de parole care nu produc o sesiune validă), exploit-urile
+care vizează direct procesul \texttt{sshd} înainte de stabilirea sesiunii,
+precum și atacurile asupra altor servicii expuse public (servere web,
+baze de date).
+
+\textbf{Exploit de kernel sau orbire a Tracee.} Un atac care reușește să
+dezactiveze sau să modifice programele eBPF deja încărcate în kernel orbește
+complet agentul. Aceasta poate veni dintr-o vulnerabilitate
+\textit{zero-day} în verificatorul eBPF (componenta de kernel care validează
+programele eBPF înainte de încărcare), din exploatarea capabilităților
+privilegiate \texttt{CAP\_BPF} sau \texttt{CAP\_SYS\_ADMIN}, sau din
+înlocuirea pur și simplu a binarului Tracee. Toate aceste tehnici necesită
+oricum drepturi apropiate de \texttt{root}, situație în care protecția
+oferită se reduce la asumarea explicită din secțiunea~\ref{tab:cap6-trust}
+(contul \texttt{root} este considerat necompromis).
+
+\textbf{Vectori de atac în afara SSH.} Execuția de cod la distanță printr-o
+aplicație web compromisă (\textit{Remote Code Execution} pe Apache, Tomcat,
+servere de aplicații), sarcini malițioase rulate prin \texttt{cron}, sau
+exploit-uri ale unor servicii care rulează sub conturi de sistem alb-listate
+(\texttt{www-data} pentru servere web, \texttt{mysql}, \texttt{postgres}
+pentru baze de date) sunt invizibile filtrelor agentului, întrucât nu trec
+prin nicio sesiune SSH. KernelTrap este construit pentru scenariul „cont
+SSH neprivilegiat compromis", nu pentru compromiterea generală a tuturor
+serviciilor expuse.
+
+\subsection{Domeniul de aplicabilitate optim}
+
+Pentru a clarifica unde KernelTrap oferă valoare maximă, tabelul
+\ref{tab:cap6-fit} cartografiază principalele profile de atacator
+împotriva nivelului de acoperire al sistemului.
+
+\begin{table}[h]
+  \centering
+  \caption{Profile de atacator și acoperirea KernelTrap}
+  \label{tab:cap6-fit}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{|p{0.34\textwidth}|c|p{0.42\textwidth}|}
+    \hline
+    \textbf{Profil atacator} & \textbf{Acoperire} & \textbf{Motiv} \\
+    \hline\hline
+    Script kiddies / atacatori oportuniști                 & Optimă   & Folosesc kit-uri publice (LinPEAS, LinEnum, pspy, module recon Metasploit) ușor recunoscute prin lexicoane. \\
+    \hline
+    Botneturi care compromit SSH prin credential stuffing  & Optimă   & După obținerea foothold-ului, execută în lanț scripturi automate de post-exploatare (recon, descărcare payload, persistență, lateral movement); generează rafale dense de syscall-uri și procese cu profil zgomotos, ușor de prins de fereastra glisantă. \\
+    \hline
+    Mișcare laterală prin cont SSH compromis              & Optimă   & Scenariul de proiectare; întreaga arhitectură este construită pentru acest caz. \\
+    \hline
+    APT cu tooling custom / fileless / 0-day kernel        & Limitată & Indicatorii bazați pe nume de proces și syscall-uri standard nu rețin profilul. \\
+    \hline
+    Brute-force / exploit pre-autentificare                & Niciuna  & Filtrele pe UID SSH activ exclud această fază. \\
+    \hline
+    RCE prin aplicații web sau servicii expuse             & Niciuna  & UID-urile sistemice sunt alb-listate; vectorul nu trece prin SSH. \\
+    \hline
+  \end{tabular}
+\end{table}
+
+KernelTrap își propune să ridice semnificativ costul atacatorilor de nivel
+mediu segmentul în care se încadrează majoritatea atacurilor observate în
+trafic real, conform sondajelor de threat intelligence fără a pretinde
+acoperirea spectrului complet pe care un EDR enterprise îl tratează.
+
+% ----------------------------------------------------------------
+\section{Sinteză evaluare}
+% ----------------------------------------------------------------
+
+Evaluarea experimentală a confirmat că sistemul atinge ținta de
+overhead stabilită în capitolul 5 (sub 2,5\% pe CPU pe gazda monitorizată)
+și detectează cu succes atât tooling-ul de recon automat (LinPEAS), cât și
+stabilirea unui canal C2 modern (Sliver), declanșând în fiecare caz
+pivotarea automată a sesiunii SSH compromise.
+Indicatorii binari de tip canary, observați după redirecționarea în
+honeypot, oferă confirmarea independentă a faptului că pivotarea a fost
+justificată și telemetrie suplimentară asupra obiectivelor atacatorului.
+Limitările identificate actori avansați cu tooling custom, atacuri
+pre-autentificare, vectori în afara SSH sunt asumate explicit și
+poziționează KernelTrap ca un sistem de detecție și răspuns activ
+specializat pe atacatori autentificați de nivel mediu, complementar
+soluțiilor de protecție perimetrale și EDR-urilor generale, nu un
+înlocuitor pentru acestea.

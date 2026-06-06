@@ -1,0 +1,366 @@
+% ================================================================
+% Capitolul 4 – Abordarea Propusă
+% Lucrare de licență: Kernel Trap – Sistem Inteligent de Prevenire
+% a Intruziunilor cu Componente de Honeypot și Învățare Automată
+% Autor: Banciu George-Horațiu
+% Coordonator: Conf. Univ. Dr. Bufnea Darius Vasile
+% ================================================================
+
+\chapter{Abordarea propusă}
+
+Capitolul de față descrie arhitectura și deciziile de proiectare ale sistemului KernelTrap,
+explicând \textit{de ce} au fost alese soluțiile tehnice prezentate și cum se articulează
+componentele într-un flux coerent de la monitorizare la răspuns activ. Pornind de la tehnologiile
+individuale introduse anterior (sisteme HIDS/IPS, eBPF, Isolation Forest, Redis Streams și
+containere Docker), prezentul capitol tratează modul în care acestea sunt combinate și configurate
+pentru a forma un sistem inteligent de prevenire a intruziunilor.
+
+KernelTrap este, în esență, un \textit{Host Intrusion Prevention System} (HIPS) distribuit, bazat pe
+monitorizare comportamentală la nivel de kernel. Nucleul sistemului îl constituie motorul de
+detecție: un model Isolation Forest antrenat pe date reale de syscall care evaluează în timp real
+fiecare eveniment generat de sesiunile SSH active și produce un scor de anomalie. Mecanismul de
+prevenire, adică răspunsul activ, constă în pivotarea transparentă a sesiunii compromise către un
+container honeypot izolat, fără ca atacatorul să fie alertat.
+
+Abordarea rezolvă o limitare fundamentală a honeypot-urilor tradiționale: un atacator care a
+compromis deja un sistem legitim nu are niciun motiv să migreze voluntar către un
+sistem-momeală. KernelTrap elimină această dependență prin detecție automată bazată pe
+comportament și pivotare inițiată de sistem, nu de atacator.
+
+Așa cum a reieșit din analiza stadiului actual prezentată în capitolul anterior, niciuna dintre
+soluțiile examinate nu integrează simultan monitorizarea eBPF, detecția prin învățare automată
+nesupervizată, honeypot-ul cu interacțiune ridicată și mecanismul de răspuns activ. Fiecare
+decizie de proiectare expusă în secțiunile următoare se sprijină pe rezultate empirice raportate
+în lucrările citate în capitolul 3, care justifică alegerile făcute și permit poziționarea
+KernelTrap față de starea curentă a domeniului.
+
+\section{Vedere de ansamblu}
+
+Sistemul KernelTrap este structurat în patru componente funcționale, distribuite pe mai multe
+mașini fizice sau virtuale și interconectate prin Redis Streams:
+
+\begin{enumerate}
+  \item \textbf{Agentul de colectare} (\textit{agent}) rulează pe fiecare gazdă protejată și
+    captează evenimentele de syscall produse de sesiunile SSH active, normalizează și filtrează
+    datele, după care le publică pe un stream Redis dedicat gazdei. Este componenta de
+    telemetrie a IPS-ului: ușoară, fără stare și fără rol decizional.
+
+  \item \textbf{Serverul central de analiză și decizie} (\textit{central server}) reprezintă
+    creierul IPS-ului: agregate fluxurile de la toți agenții, atribuie un scor fiecărui eveniment cu
+    modelul Isolation Forest, aplică mecanismul de fereastră glisantă și decide automat când
+    un utilizator depășește pragul de anomalie. Serverul emite comenzile de răspuns activ
+    pe stream-urile de comandă ale gazdelor afectate și expune un API de tip REST împreună cu o
+    conexiune WebSocket pentru panoul de control.
+
+  \item \textbf{Containerul honeypot} (\textit{hp-shell}) este mecanismul de izolare și
+    observare activat după decizia IPS-ului: primește sesiunile SSH pivotate, expune un mediu
+    Linux aparent funcțional populat cu fișiere-capcană (\textit{canary files}), înregistrează
+    integral activitatea atacatorului prin captură de terminal și raportează propriile evenimente
+    de syscall înapoi la serverul central prin același mecanism de streaming.
+
+  \item \textbf{Panoul de control} (\textit{dashboard}) oferă operatorilor de securitate o
+    interfață web în timp real pentru monitorizarea agenților conectați, inspecția fluxului de
+    evenimente procesate și declanșarea manuală a pivotărilor, complementând automatizarea cu
+    posibilitatea de intervenție umană.
+\end{enumerate}
+
+Arhitectura este deliberat asimetrică: agenții sunt ușori și fără stare, toate deciziile de
+analiză și răspuns fiind centralizate în serverul central. Aceasta permite adăugarea de noi
+gazde monitorizate fără modificarea serverului: agentul nou publică pe un stream nou, iar
+serverul îl descoperă automat. Cuplajul slab dintre componente este asigurat de Redis Streams,
+care acționează ca magistrală de mesaje persistentă.
+
+Fluxul de date parcurge sistemul în patru faze:
+\textbf{Colectare} (agentul captează syscall-urile și le publică) →
+\textbf{Detecție} (serverul central atribuie scoruri evenimentelor și realizează agregarea acestora prin intermediul unei ferestre glisante) →
+\textbf{Decizie IPS} (pragul de anomalie este depășit) →
+\textbf{Răspuns activ} (pivotare în honeypot + blocare IP).
+
+\section{Colectarea și preprocesarea evenimentelor la nivel de agent}
+
+Un sistem de monitorizare bazat pe syscall-uri se confruntă imediat cu o problemă de volum:
+un server Linux tipic generează zeci de mii de syscall-uri pe secundă, provenite din sute de
+procese, inclusiv daemoni de sistem, sarcini cron și servicii de rețea. Includerea tuturor
+acestor evenimente în analiza de anomalii ar genera un fond de zgomot care ar diminua
+sensibilitatea detecției, iar antrenarea modelului pe astfel de date ar conduce la învățarea
+unor tipare irelevante pentru scenariile de atac vizate.
+
+KernelTrap răspunde acestei probleme prin trei principii de filtrare aplicate în lanț la
+nivelul agentului:
+
+\textbf{Filtrarea pe sesiune SSH.} Doar evenimentele generate de utilizatorii cu sesiuni SSH
+active sunt transmise mai departe. Rațiunea este dublă: atacatorii care obțin acces interactiv
+prin SSH constituie populația-țintă a sistemului, iar procesele de sistem (init, cron, sshd,
+daemoni de rețea), cu UID-uri sistemice fixe, sunt excluse prin liste albe gestionate atât la
+agent, cât și pe serverul central.
+
+\textbf{Excluderea propriei activități a agentului.} Tracee captează toate apelurile de sistem
+de pe gazdă, inclusiv pe cele emise de procesul agentului atunci când publică evenimentele.
+Fără un mecanism de auto-excludere, syscall-urile agentului ar fi raportate către serverul
+central, clasificate ca anormale (sunt rare în datele de antrenare) și ar genera o buclă de
+auto-întărire cu fals pozitive. Agentul își exclude prin urmare propriile evenimente și pe cele
+ale procesului-părinte, înaintea publicării.
+
+\textbf{Normalizarea identității syscall-urilor.} Tracee raportează evenimentele prin denumiri
+textuale, pe care KernelTrap le mapează la identificatori numerici consecutivi printr-un tabel
+de corespondență stabil între rulări și consistent pe toate gazdele monitorizate. Această
+codificare permite modelului antrenat să generalizeze indiferent de gazda sursă și acoperă
+atât syscall-urile standard Linux, cât și hook-urile LSM (Linux Security Modules) folosite de
+Tracee pentru evenimente cu context de securitate mai bogat.
+
+Alegerea Tracee ca instrument de captare a evenimentelor este susținută de studiul comparativ
+al lui Syairozi și Arizal~\cite{syairozi2025ebpfcomparative}, care arată că Tracee oferă cea
+mai mică amprentă pe CPU și cea mai bună acoperire a hook-urilor LSM dintre soluțiile
+open-source testate (Falco, Tetragon, KubeArmor, Tracee). La nivelul costului de instrumentare,
+eBPF-PATROL~\cite{ebpfpatrol2025} demonstrează că un agent minimal bazat pe interceptare de
+syscall-uri poate menține un overhead sub 2,5\%
+
+\section{Infrastructura de comunicație prin Redis Streams}
+
+Alegerea Redis Streams~\cite{redis2024streams} ca magistrală de mesaje răspunde unei cerințe
+specifice: evenimentele trebuie să persiste suficient timp pentru a fi procesate de serverul
+central chiar și în cazul unui restart temporar, dar sistemul nu trebuie să introducă
+complexitatea operațională a unui broker distribuit complet (Apache Kafka, RabbitMQ). Față de
+Redis Pub/Sub, care pierde mesajele dacă niciun subscriber nu este activ, Streams persistă
+intrările și le face disponibile pentru citire ulterioară.
+
+Topologia de comunicație folosește două tipuri de stream-uri, organizate per-gazdă:
+un stream de evenimente, pe care fiecare agent își publică telemetria, și un stream de
+comenzi, prin care serverul central transmite agenților ordine de pivotare. Separarea celor
+două roluri permite ca agenții să fie complet decuplați unii de alții și să fie adăugați la
+infrastructură fără modificarea serverului. Descoperirea automată a agenților noi se face
+printr-un mecanism de tip \textit{zero-configuration discovery}: serverul scanează periodic
+spațiul de chei Redis și începe să consume orice stream nou apărut, fără configurare manuală.
+
+Arhitectura event-driven decuplează producătorii de evenimente (agenții) de consumatorul de
+analiză (serverul central), permițând fiecărei părți să continue funcționarea independent de
+disponibilitatea momentană a celeilalte.
+
+
+\section{Modelul de detecție a anomaliilor}
+
+
+KernelTrap folosește Isolation Forest~\cite{liu2008iforest} antrenat exclusiv pe date benigne
+, o abordare \textit{one-class}~\cite{chandola2009anomaly} potrivită contextului în care
+atacurile reale sunt rare și impredictibile, iar etichetarea lor manuală nu este fezabilă.
+Compromisul abordării nesupervizate este o rată potențial mai ridicată de fals pozitive decât
+a clasificatorilor binari, atenuată în KernelTrap prin agregarea temporală descrisă în secțiunea
+următoare.
+
+\subsection{Caracteristici și antrenare}
+
+Implementările clasice ale modelelor pe BETH~\cite{atawneh2025symmetry} folosesc doar șapte
+câmpuri numerice de bază (\texttt{processId}, \texttt{parentProcessId}, \texttt{userId},
+\texttt{mountNamespace}, \texttt{eventId}, \texttt{argsNum}, \texttt{returnValue}). KernelTrap
+extinde acest set la 22 de dimensiuni prin patru categorii de derivate: codificare prin
+frecvență a câmpurilor categoriale (\texttt{eventId}, \texttt{mountNamespace},
+\texttt{processName}); indicatori binari extrași din câmpul \texttt{args} care semnalează căi
+sensibile (\texttt{/etc/shadow}, \texttt{.ssh/}), fișiere canary, traversare de directoare,
+metacaractere shell și adrese IP/URL; categorii de procese (shell-uri, interpretori, unelte de
+recon, unelte de rețea, helper-e de escaladare); și caracteristici rolling per-proces calculate
+pe ferestre de 5 secunde (rata de syscall, diversitatea, raportul de eșecuri, intervalul de
+timp). Câmpurile \texttt{processId}, \texttt{parentProcessId} și \texttt{userId} nu sunt
+folosite ca features directe, deoarece, fiind identificatori, scalarea lor ca valori continue induce
+modelul în eroare; sunt păstrate doar ca chei de grupare pentru caracteristicile rolling și
+calibrarea pragurilor per-entitate.
+
+Modelul este antrenat pe partiția benignă a setului BETH~\cite{highnam2021beth}, care conține
+peste 8 milioane de evenimente colectate prin eBPF din honeypot-uri cloud, aceeași tehnologie
+folosită de agentul KernelTrap, ceea ce minimizează discrepanța dintre datele de antrenare și
+cele de producție. Caracteristicile sunt standardizate înainte de a fi introduse într-un
+Isolation Forest cu 2000 de arbori, iar antrenarea folosește o tehnică de eșantionare uniformă
+care păstrează în memorie cel mult 10 milioane de instanțe benigne, suficient pentru
+acoperirea diversității comportamentelor normale fără a încărca întregul set.
+
+Pe această configurație, modelul atinge AUROC~$=$~0,969 și \textit{Average Precision}~$=$~0,994
+pe partiția de test BETH. Aceste valori depășesc atât rezultatele de referință din lucrarea
+originală a setului~\cite{highnam2021beth}, cât și valoarea de 0,87 raportată de Atawneh et
+al.~\cite{atawneh2025symmetry} pentru un Isolation Forest aplicat direct pe cele 7
+caracteristici clasice ale BETH. Lakha et al.~\cite{lakha2022beth} ating AUROC peste 0,90 cu
+o combinație de Graph Neural Network și Transformer, dar cu un cost computațional
+semnificativ mai mare. Aceste valori constituie reperele folosite pentru evaluarea modelului
+din KernelTrap în capitolele ulterioare.
+
+\subsection{Praguri și calibrare în producție}
+
+Isolation Forest returnează pentru fiecare eveniment un scor continuu prin
+\texttt{decision\_function}: valorile pozitive corespund comportamentului normal, cele negative
+corespund anomaliilor. KernelTrap calibrează praguri individuale per-(\texttt{hostname}, \texttt{userId})
+pe partiția de validare BETH: percentila 2\% definește pragul severity 1 (anomalie minoră,
+raportată în panoul de control dar insuficientă pentru pivotare), iar percentila 0,2\% definește
+pragul severity 2 (anomalie majoră, intră în decizia de pivot). Granularitatea per-(host,
+utilizator) reflectă faptul că același UID poate corespunde unor utilizatori complet diferiți
+pe gazde diferite. Folosirea percentilelor fixe ca mecanism de calibrare urmează metoda
+formalizată de Dani et al.~\cite{dani2016adaptive}.
+
+În deployment, distribuția live a scorurilor pe o stație Linux modernă diferă semnificativ
+de cea pe care au fost calibrate pragurile (gazde cloud BETH 2021). Pentru a corecta această
+derivă fără reantrenare, KernelTrap permite suprascrierea pragurilor în producție și aplică o
+listă albă de procese de infrastructură (daemoni de desktop și sistem) care forțează
+severitatea la 0 pentru procesele care nu apar în BETH, dar nici nu reprezintă vectori de
+atac. Un mecanism de raportare a sănătății modelului expune raportul dintre scorurile live și
+pragurile teoretice, alertând operatorul când acestea nu mai reflectă distribuția reală.
+
+\section{Agregarea prin fereastră glisantă}
+
+Un eveniment izolat cu severitate 2 nu este o dovadă suficientă pentru a declanșa pivotarea.
+Comportamentul legitim poate genera ocazional syscall-uri cu scoruri extreme: un administrator
+care execută o operație rară, un script de backup neobișnuit sau o actualizare de sistem pot
+produce scurte rafale de anomalii minore. Acceptarea unui singur eveniment ca trigger ar genera
+un număr inacceptabil de fals pozitive și ar pivota utilizatori legitimi.
+
+KernelTrap menține pentru fiecare pereche \texttt{(hostname, userId)} o colecție cu marcaj
+temporal a evenimentelor scor-uite din ultimele 60 de secunde. Pivotarea se declanșează numai
+dacă sunt îndeplinite simultan două condiții: cel puțin 5 evenimente de severitate 2 în
+fereastră (prag absolut, exclude rafalele accidentale) și cel puțin 30\% din totalul
+evenimentelor utilizatorului să fie de severitate 2 (prag de rată, exclude false pozitivele pe
+utilizatori activi). Pragul de rată este esențial: pe o sesiune cu mii de syscall-uri benigne
+pe minut, 5 evenimente sev-2 izolate reprezintă mai puțin de 0,5\% din activitate și nu
+constituie semnal suficient; pe o sesiune compromisă în care atacatorul execută unelte de recon
+sau exploatare, peste 30\% din syscall-uri pot fi anormale. Combinația celor două praguri este
+robustă față de ambele extreme și reduce semnificativ rata de fals pozitive față de pragul
+pur cantitativ.
+
+Lista albă de UID-uri ale serviciilor de sistem (root și daemoni cu UID-uri fixe) garantează că
+niciun cont critic nu poate fi pivotat din greșeală. Odată ce un utilizator a fost pivotat,
+starea sa rămâne marcată până la reinițializarea manuală.
+
+Combinația Isolation Forest cu fereastră glisantă a fost validată în literatură de
+algoritmul iForestASD~\cite{ding2024iforestasd}, una dintre primele formulări ale acestui cuplaj
+în context de streaming. Yunus et al.~\cite{yunus2024sliding} extind ideea cu mai multe ferestre
+paralele evaluate prin votare, demonstrând o reducere suplimentară a ratei de fals pozitive un
+rezultat care confirmă valoarea agregării temporale ca mecanism complementar scoringului ML.
+
+\section{Mecanismul de pivotare}
+
+\subsection{Detecție și comandă}
+
+Când fereastra glisantă depășește ambele praguri, serverul central emite o comandă de
+pivotare pe stream-ul de comenzi al gazdei afectate. Decizia este transmisă prin UID
+numeric, nu prin nume de utilizator: într-o infrastructură multi-gazdă, același UID poate
+corespunde unor utilizatori diferiți pe mașini diferite, iar rezolvarea în nume se face
+local, pe gazdă. Separarea între decizie (serverul central, fără privilegii) și execuție
+(agentul local, cu privilegii ridicate) este deliberată: serverul nu necesită acces root pe
+gazdele monitorizate, ceea ce reduce suprafața de atac a sistemului însuși.
+
+\subsection{Execuția pivotării}
+
+Pivotarea propriu-zisă combină trei mecanisme conceptuale într-o secvență ordonată. \emph{În
+primul rând}, conexiunile TCP \emph{noi} de la adresa atacatorului sunt blocate la nivel de
+firewall, în timp ce sesiunea SSH deja stabilită este lăsată intactă; o închidere bruscă a
+conexiunii ar alerta atacatorul, ratând astfel ocazia de observare. \emph{În al doilea rând},
+contul utilizatorului este provizionat dinamic în containerul honeypot, populat cu
+fișiere-capcană (descrise în secțiunea următoare) și pregătit să accepte sesiunea pivotată.
+\emph{În al treilea rând}, shell-ul activ al utilizatorului este forțat, printr-un mecanism
+de semnal POSIX, să-și înlocuiască propriul proces cu o nouă sesiune SSH către containerul
+honeypot, păstrând conexiunea TCP a clientului. Din perspectiva atacatorului, sesiunea
+continuă fără întrerupere vizibilă: doar conținutul shell-ului se schimbă, indistinguibil
+de o conexiune SSH executată voluntar către un alt sistem din rețeaua internă.
+
+Cea mai apropiată lucrare conceptual este Lopez et al.~\cite{lopez2024tcpredirection}, care
+propune redirecționare TCP transparentă bazată pe reguli NAT statice. KernelTrap se
+diferențiază în două aspecte: declanșarea pivotării se face pe baza unei decizii ML
+calibrate per-(gazdă, utilizator) la nivel de syscall, nu pe reguli statice de rețea; iar
+mecanismul de înlocuire la nivel de proces shell permite tratarea sesiunilor deja
+stabilite, fără NAT și fără reconectare, un scenariu pe care abordarea pur TCP a lui Lopez
+et al. nu îl acoperă. Independența față de modificarea daemon-ului SSH urmează principiul
+demonstrat de Kahlhofer și Rass~\cite{kahlhofer2024applayer}.
+
+\section{Honeypot-ul}
+
+\subsection{Oglindire dinamică a identității}
+
+Un honeypot eficient nu trebuie să pară suspect. Dacă utilizatorul pivotat ar descoperi că
+se află pe un alt sistem (hostname diferit, utilizatori absenți, sistem de fișiere gol),
+ar putea abandona sesiunea, pierzând orice beneficiu de observare. KernelTrap previne această
+problemă prin \textit{oglindire dinamică a identității}: la momentul pivotării, scriptul de
+instalare creează în containerul honeypot un cont cu exact același nume de utilizator ca cel
+de pe gazda reală, transferă cheile SSH publice ale contului original și configurează shell-ul
+implicit identic.
+
+Hostname-ul containerului poate fi configurat să coincidă cu cel al gazdei reale, eliminând
+și această indicație vizibilă a tranziției. Mecanismul de high-interaction honeypot, unde
+atacatorul interacționează cu un
+sistem Linux real, nu cu o emulare, permite observarea unor tehnici de atac complexe pe care
+emulările low-interaction nu le-ar putea captura~\cite{spitzner2002honeypots}. Alegerea unui
+container Docker, în detrimentul unei mașini virtuale dedicate, este sprijinită de studiul
+publicat în \textit{Informatics}~\cite{honeypotsurvey2025}, care identifică soluțiile bazate pe
+containere drept cel mai bun raport între bogăția datelor capturate și costul operațional în
+scenariul SSH cu interacțiune ridicată, și de Iwendi et al.~\cite{iwendi2023container}, care
+documentează un sistem honeypot complet containerizat funcționând în cloud.
+
+\subsection{Fișiere canary}
+
+Așa cum s-a prezentat în capitolul de aspecte teoretice, honeytokens-urile sunt artefacte
+digitale false al căror simplu acces constituie un indicator incontestabil de compromitere.
+KernelTrap aplică acest principiu în containerul honeypot prin plasarea de fișiere-capcană
+(\textit{canary files}) în directorul home al utilizatorului pivotat. Fișierele sunt
+proiectate pe categorii care imită resursele țintite frecvent de atacatorii motivați
+financiar sau de spionaj: credențiale cloud (chei de acces de tip AWS), chei SSH prezentate
+ca \textit{deploy key} pentru servere interne, fișiere de variabile de mediu cu credențiale
+fictive de bază de date și token-uri de API, note interne care referențiează sisteme și
+servere inexistente menite să ghideze atacatorul mai departe în rețeaua simulată, precum și
+token-uri de autentificare pentru sisteme CI/CD. Toate sunt construite cu format realist,
+astfel încât un atacator care le inspectează să nu poată distinge cu ușurință între
+canary-uri și artefacte legitime.
+
+Accesul la oricare dintre aceste fișiere este monitorizat prin reguli de audit la nivel de
+kernel: orice tentativă de citire generează imediat un eveniment vizibil atât în jurnalul
+containerului, cât și pe panoul de control al serverului central. Identificatorii regulilor
+de audit sunt deliberat ofuscați, pentru a împiedica un atacator care interoghează regulile
+active să recunoască ușor fișierele-momeală.
+
+Eficacitatea fișierelor canary este susținută empiric de Bourke și
+Grzelak~\cite{bourke2018awstokens}, care raportează o rată de declanșare de 83\% pentru
+token-urile AWS plasate în depozitele GitHub publice, dovadă clară că atacatorii reali
+investighează sistematic credențialele găsite în sistemele compromise. Sondajul recent al lui
+Khan et al.~\cite{honeytokenssurvey2024} confirmă rolul central al honeytoken-urilor în
+strategiile moderne de apărare activă.
+
+\subsection{Înregistrarea sesiunilor TTY}
+
+Containerul honeypot este configurat astfel încât fiecare sesiune SSH primește automat
+înregistrare integrală a terminalului (\textit{full tty recording}) înainte de pornirea
+shell-ului interactiv. Înregistrarea capturează atât intrările tastate de atacator, cât și
+ieșirile vizibile pe ecran: comenzile executate, rezultatele programelor, editările de
+fișiere, erorile de autentificare și eventualele tentative de escaladare de privilegii.
+
+Această capacitate de înregistrare completă a sesiunii este esențială atât din perspectiva
+investigației digitale (reconstituind cronologic toate acțiunile atacatorului), cât și din
+perspectiva analizei de amenințări: tipare de comportament post-compromitere, tehnicile,
+tacticile și procedurile folosite, precum și țintele urmărite. Fișierele de sesiune sunt
+păstrate pe un volum persistent, rămânând disponibile pentru analiză ulterioară chiar și
+după oprirea sau recrearea containerului.
+
+\subsection{Monitorizarea în container și feedback loop}
+
+Containerul honeypot rulează propriul mecanism de monitorizare a syscall-urilor produse în
+interiorul său, captând atât execuțiile de comenzi, cât și accesele la fișierele-capcană.
+Evenimentele rezultate sunt publicate pe propriul stream Redis în același format folosit de
+agenții de pe gazdele reale, ceea ce permite serverului central să le proceseze, să le
+atribuie un scor de anomalie și să le afișeze în panoul de control fără logică
+suplimentară de tratare a sursei.
+
+Această buclă de feedback închide ciclul de observare al IPS-ului: KernelTrap monitorizează
+comportamentul utilizatorilor atât înainte de pivotare, pe gazda reală, cât și după, în
+containerul honeypot, menținând o perspectivă continuă asupra sesiunii și posibilitatea de a
+detecta anomalii suplimentare chiar și în mediul de confinement.
+
+\section{Panoul de control în timp real}
+
+Panoul de control oferă operatorilor o interfață web unificată pentru
+monitorizarea și controlul sistemului. Arhitectura de comunicație combină două mecanisme
+complementare, alese în funcție de natura datelor afișate. \textbf{Push în timp real}
+(WebSocket): evenimentele procesate de serverul central sunt transmise imediat către toți
+clienții conectați, garantând că orice anomalie majoră devine vizibilă în câteva
+milisecunde. \textbf{Polling periodic} pentru date cu rată de schimbare mai mică: lista
+agenților conectați, starea ferestrelor glisante per-utilizator și istoricul pivotărilor
+sunt reîmprospătate la intervale fixe, evitând supraîncărcarea conexiunii principale cu
+informații care se schimbă rar. Reziliența la întreruperi este asigurată printr-un mecanism
+de reconectare automată cu interval crescător, astfel încât panoul să tolereze restarturile
+serverului fără intervenție manuală.
+
+În plus, panoul expune posibilitatea de declanșare manuală a pivotărilor, completând
+detecția automată cu intervenția umană bazată pe judecata operatorului. Ambele tipuri de
+pivotare (automată și manuală) sunt înregistrate în istoricul de audit al sistemului,
+împreună cu tipul de trigger și momentul evenimentului.

@@ -1,0 +1,331 @@
+% ================================================================
+% Capitolul 2 – Aspecte Teoretice
+% Lucrare de licență: Kernel Trap – Sistem Inteligent de Prevenire
+% a Intruziunilor cu Componente de Honeypot și Învățare Automată
+% Autor: Banciu George-Horațiu
+% Coordonator: Conf. Univ. Dr. Bufnea Darius Vasile
+% ================================================================
+
+\chapter{Aspecte teoretice}
+
+Capitolul de față prezintă fundamentele conceptuale și tehnologice pe care se construiesc
+sistemele moderne de detectare și prevenire a intruziunilor bazate pe monitorizarea la nivel
+de kernel. Sunt tratate paradigmele IDS/IPS, mecanismele de interceptare a apelurilor de sistem
+prin eBPF, instrumentele de colectare a evenimentelor, tehnicile de detecție a anomaliilor prin
+învățare automată nesupervizată și principiile apărării active prin honeypot-uri.
+
+% ----------------------------------------------------------------
+\section{Sisteme de detectare și prevenire a intruziunilor}
+% ----------------------------------------------------------------
+
+Un \textit{sistem de detectare a intruziunilor} (\textit{Intrusion Detection System}, IDS) este
+o componentă de securitate ce monitorizează în timp real activitatea unui sistem sau rețea în scopul
+identificării comportamentelor suspecte sau a activităților neautorizate~\cite{liu2018hids}. Atunci
+când un IDS este dotat și cu capacități de răspuns activ (blocarea conexiunilor, terminarea
+proceselor sau redirecționarea traficului), acesta devine un \textit{sistem de prevenire a
+intruziunilor} (\textit{Intrusion Prevention System}, IPS).
+
+Din perspectiva punctului de colectare a datelor, sistemele IDS se clasifică în două mari categorii:
+
+\begin{itemize}
+  \item \textbf{NIDS} (\textit{Network-based IDS}): monitorizează traficul de rețea la nivel de
+    pachete, identificând tipare de atac (scanări de porturi, flood-uri, exploit-uri cunoscute)
+    fără acces la starea internă a gazdelor individuale.
+  \item \textbf{HIDS} (\textit{Host-based IDS}): rulează direct pe gazda monitorizată și analizează
+    evenimente produse la nivelul sistemului de operare (apeluri de sistem, jurnale de aplicație,
+    accesuri la fișiere și modificări de configurație), oferind vizibilitate asupra comportamentului
+    proceselor individuale~\cite{liu2018hids}.
+\end{itemize}
+
+Cele două abordări sunt complementare: NIDS detectează atacuri la nivel de transport, dar nu poate
+inspecta comunicațiile criptate și nu are acces la comportamentul intern al proceselor; HIDS are
+vizibilitate deplină asupra stării gazdei, dar nu observă activitatea laterală dintre alte mașini
+din rețea.
+
+Literatura de specialitate distinge două paradigme principale de detecție~\cite{liu2018hids,ring2021deep}:
+
+\textbf{Detecția bazată pe semnături} (\textit{signature-based detection}) compară activitatea
+observată cu o bază de cunoștințe de tipare de atac cunoscute. Rata de fals pozitive este scăzută
+iar detecția este rapidă, dar metoda este prin definiție oarbă la amenințările noi (\textit{zero-day})
+care nu figurează în baza de semnături. Soluții comerciale precum Snort sau Suricata se bazează
+preponderent pe această abordare.
+
+\textbf{Detecția bazată pe anomalii} (\textit{anomaly-based detection}) construiește un model al
+comportamentului normal și semnalează orice deviere semnificativă de la acesta. Această paradigmă
+poate detecta, în principiu, atacuri necunoscute anterior, deoarece nu depinde de semnăturile lor
+specifice. Compromisul acceptat constă într-o rată mai ridicată de fals pozitive, generată de
+variabilitatea naturală a comportamentului benign. Sistemele moderne combină adesea ambele abordări
+pentru a valorifica avantajele fiecăreia~\cite{ring2021deep}.
+
+% ----------------------------------------------------------------
+\section{Apeluri de sistem și rolul lor în securitate}
+% ----------------------------------------------------------------
+
+Sistemul de operare Linux separă execuția în \textit{user space} (unde rulează aplicațiile
+neprivilegiate) și \textit{kernel space}, unde se execută codul privilegiat al nucleului.
+Această separare este impusă hardware prin inelele de protecție ale procesorului (Ring 0 pentru
+kernel, Ring 3 pentru aplicații) și constituie fundația modelului de securitate al sistemului
+de operare~\cite{bovet2005understanding}.
+
+Comunicarea dintre cele două domenii se realizează exclusiv prin \textit{apeluri de sistem}
+(\textit{syscalls}): puncte de intrare controlate prin care un program solicită nucleului operații
+privilegiate. Nucleul Linux expune în prezent peste 300 de apeluri de sistem, grupate funcțional
+în categorii: gestionarea proceselor (\texttt{fork}, \texttt{execve}, \texttt{exit}), accesul la
+fișiere (\texttt{open}, \texttt{read}, \texttt{write}, \texttt{unlink}), comunicația prin rețea
+(\texttt{socket}, \texttt{connect}, \texttt{bind}), gestionarea utilizatorilor și privilegiilor
+(\texttt{setuid}, \texttt{setgid}, \texttt{capset}) și controlul proceselor
+(\texttt{kill}, \texttt{ptrace})~\cite{kerrisk2010linux}.
+
+Orice acțiune relevantă din perspectiva securității trece obligatoriu prin interfața syscall.
+Un atacator care rulează un exploit, escaladează privilegii sau exfiltrează date nu poate ocoli
+această interfață, indiferent de tehnica folosită. Această proprietate face din secvențele de
+syscall-uri o sursă ideală de telemetrie pentru sistemele HIDS.
+
+Spre deosebire de logurile aplicative (care pot fi falsificate sau suprimate de un atacator cu
+privilegii ridicate), evenimentele de la nivelul syscall-urilor sunt inspecționate de nucleu
+înainte ca aplicația să aibă posibilitatea de a interveni~\cite{tracee2024}. Astfel, chiar dacă
+un atacator compromite complet o aplicație, comportamentul acesteia rămâne vizibil prin
+instrumentarea nucleului.
+
+Din perspectiva unui HIDS, secvențele de syscall-uri permit identificarea unor tipare
+comportamentale caracteristice atacurilor: un \texttt{execve} urmat imediat de \texttt{setuid}
+și \texttt{capset} sugerează o tentativă de escaladare de privilegii; o explozie de apeluri
+\texttt{connect} către adrese IP externe indică o potențială activitate de tip Command and Control;
+o secvență \texttt{open}/\texttt{read} pe fișierele \texttt{/etc/shadow} sau \texttt{/etc/passwd}
+semnalează recunoaștere locală a sistemului~\cite{liu2018hids}.
+
+% ----------------------------------------------------------------
+\section{Extended Berkeley Packet Filter (eBPF)}
+% ----------------------------------------------------------------
+
+Berkeley Packet Filter (BPF), introdus în 1992 de McCanne și Jacobson ca mecanism de filtrare
+a pachetelor de rețea la nivel de kernel~\cite{mccanne1993bsd}, a fost extins radical începând
+cu nucleul Linux 3.18 (2014) sub forma \textit{extended BPF} (eBPF)~\cite{gregg2019bpf}. Dacă
+BPF-ul clasic opera exclusiv pe pachete de rețea, eBPF permite atașarea de programe la orice
+punct de instrumentare din nucleu: syscall-uri, kprobes, uprobes, tracepoints și evenimente LSM
+(\textit{Linux Security Modules}).
+
+Arhitectural, eBPF funcționează ca o mașină virtuală ușoară integrată în nucleu, cu un set de
+instrucțiuni propriu (64 de biți, 11 regiștri generali) și un model de execuție bazat pe evenimente.
+Programele sunt scrise în C restricționat, compilate în bytecode și supuse unui \textit{verificator
+static} care garantează absența buclelor infinite, a acceselor invalide la memorie și a scurgerilor
+de resurse~\cite{gregg2019bpf}. Verificatorul analizează toate căile posibile de execuție
+ale programului înainte de încărcare, respingând programele care nu pot fi demonstrate sigure.
+Bytecode-ul validat este ulterior compilat JIT (\textit{Just-in-Time}) în instrucțiuni native ale
+procesorului.
+
+Starea este partajată între programe și user space prin \textit{eBPF Maps}, structuri cheie-valoare
+rezidente în kernel space, accesibile din ambele domenii. Apelurile din programele eBPF către
+funcțiile nucleului se fac exclusiv prin \textit{helper functions} cu interfață stabilă, garantând
+compatibilitatea între versiuni diferite de kernel.
+
+Înainte de eBPF, instrumentarea nucleului la runtime necesita una din două abordări, ambele
+problematice în producție: modificarea codului sursă al nucleului (imposibilă fără acces la sursă
+și fără repornire) sau încărcarea de module de nucleu (\textit{Loadable Kernel Modules}, LKM).
+Modulele de nucleu rulează în Ring 0, fără niciun mecanism de verificare prealabilă, iar un bug
+poate produce panică de kernel sau compromiterea întregului sistem.
+
+eBPF elimină aceste limitări: programele se încarcă la runtime, fără repornire, și sunt garantate
+sigure de verificator înainte de execuție. Față de mecanisme alternative precum \texttt{auditd}
+sau \texttt{ptrace}, eBPF prezintă cost suplimentar semnificativ mai redus, deoarece filtrarea și
+agregarea evenimentelor se realizează direct în kernel space, reducând la minimum cantitatea de
+date transferate către user space~\cite{gregg2019bpf}.
+
+% ----------------------------------------------------------------
+\section{Tracee: instrumentul de colectare a evenimentelor}
+% ----------------------------------------------------------------
+
+Tracee este un instrument open-source de securitate runtime pentru Linux, dezvoltat și menținut
+de Aqua Security~\cite{aqua2024tracee}. Folosește eBPF pentru a intercepta evenimentele de sistem
+la runtime și a le expune ca fluxuri de date structurate în format JSON, acoperind un spectru larg
+de activitate: crearea și terminarea de procese, accesul la fișiere, conexiunile de rețea,
+modificările de permisiuni și evenimentele LSM.
+
+Tracee este compus din două componente principale: \textbf{Tracee-eBPF}, care compilează și
+încarcă programele eBPF în nucleu și expune fluxul brut de evenimente, și \textbf{Tracee-Rules},
+un motor de detectare bazat pe reguli scrise în Go sau Rego (limbajul de politici al Open Policy
+Agent). O caracteristică notabilă este preferința pentru evenimentele
+LSM față de syscall-urile brute (de exemplu, \texttt{security\_file\_open} în locul \texttt{openat}),
+care oferă informații mai complete despre contextul de securitate și sunt mai puțin susceptibile
+la atacuri de tip TOCTOU (\textit{Time-of-Check to Time-of-Use})~\cite{aqua2024tracee}.
+
+Portabilitatea pe kernel-uri diferite este asigurată prin suportul \textit{Compile Once – Run
+Everywhere} (CO:RE), bazat pe \textit{BPF Type Format} (BTF): pe nucleele cu BTF activat, nu
+sunt necesare nici recompilarea probe-urilor, nici prezența header-elor de nucleu pe sistemul
+țintă. Aceasta face din Tracee o soluție practică pentru deployment pe
+infrastructuri eterogene.
+
+% ----------------------------------------------------------------
+\section{Honeypot-uri și apărarea activă}
+% ----------------------------------------------------------------
+
+Un \textit{honeypot} este un sistem de securitate proiectat deliberat să fie compromis, cu scopul
+de a atrage atacatorii, de a le studia tehnicile și de a le deturnă resursele și atenția de la
+sistemele reale~\cite{spitzner2002honeypots}. Spre deosebire de sistemele de producție, un honeypot
+nu conține date sau servicii reale, iar orice interacțiune cu el este, prin definiție, suspectă.
+
+Taxonomia standard clasifică honeypot-urile după două criterii principale:
+
+\textbf{Nivelul de interacțiune} distinge între:
+\begin{itemize}
+  \item \textit{Honeypot-uri cu interacțiune redusă} (\textit{low-interaction}): emulează servicii
+    și sisteme de operare fără a rula un sistem real. Sunt ușor de implementat și cu risc minim
+    de compromitere, dar oferă informații limitate despre tehnicile atacatorului. Exemple tipice:
+    Honeyd, OpenCanary.
+  \item \textit{Honeypot-uri cu interacțiune ridicată} (\textit{high-interaction}): expun sisteme
+    reale (sau mașini virtuale complete) cu servicii funcționale. Colectează informații detaliate
+    despre comportamentul atacatorului, inclusiv tool-uri folosite, comenzi executate și ținte
+    vizate ulterior, dar prezintă risc mai ridicat dacă atacatorul reușește să evadeze din
+    mediul controlat~\cite{spitzner2002honeypots}.
+\end{itemize}
+
+\textbf{Scopul de utilizare} distinge între:
+\begin{itemize}
+  \item \textit{Honeypot-uri de cercetare}: implementate de organizații de securitate pentru
+    studierea tehnicilor de atac emergente, colectarea de mostre de malware și înțelegerea
+    comportamentului atacatorilor.
+  \item \textit{Honeypot-uri de producție}: integrate în rețelele organizațiilor pentru a detecta
+    activitate neautorizată internă și a alerta echipele de securitate.
+\end{itemize}
+
+Honeypot-urile tradiționale funcționează pasiv: atacatorul trebuie să ajungă la capcană din
+proprie inițiativă, alegând să interacționeze cu un serviciu-momeală. Această abordare prezintă
+o limitare fundamentală în scenariile în care atacatorul a compromis deja un sistem legitim,
+deoarece el nu are niciun motiv să migreze voluntar către un honeypot.
+
+O abordare mai avansată, denumită \textit{apărare activă} (\textit{active deception}), inversează
+această logică prin redirecționarea transparentă a unui atacator detectat de pe sistemul compromis
+către un honeypot, fără ca acesta să conștientizeze tranziția. Mecanismul se bazează tipic pe
+reguli NAT (\texttt{iptables}/\texttt{nftables}), care interceptează traficul la nivel de rețea
+și îl deviază înainte ca pachetele să ajungă la destinația originală~\cite{spitzner2002honeypots}.
+Avantajul față de abordarea pasivă constă în faptul că atacatorul nu trebuie să aleagă
+honeypot-ul din proprie inițiativă, ci este direcționat acolo în momentul în care comportamentul
+său declanșează un semnal de alertă, indiferent că a compromis deja un serviciu real.
+
+Un concept complementar honeypot-urilor îl reprezintă \textit{honeytoken-ul}: un artefact digital
+fals (fișier, cheie de acces, înregistrare în bază de date) plasat intenționat într-un sistem
+real sau într-un honeypot, proiectat să nu fie niciodată accesat de utilizatori legitimi. Orice
+interacțiune cu un honeytoken constituie, prin definiție, un indicator incontestabil de
+compromitere~\cite{spitzner2002honeypots}. Spre deosebire de detecția bazată pe anomalii
+statistice, care produce un scor continuu cu risc de fals pozitive, accesul la un honeytoken
+este un semnal binar și precis: niciun utilizator legitim nu are motiv să deschidă un fișier de
+credențiale pe care el însuși nu l-a creat. Honeytokens-urile pot lua diverse forme: fișiere cu
+credențiale fictive, chei SSH false, token-uri de API nevalide sau înregistrări-capcană în baze
+de date. Sunt utilizate atât în medii de producție pentru detectarea accesului neautorizat,
+cât și în honeypot-uri pentru a monitoriza comportamentul post-compromitere al atacatorilor.
+
+% ----------------------------------------------------------------
+\section{Algoritmul Isolation Forest}
+% ----------------------------------------------------------------
+
+Isolation Forest (\textit{iForest}), propus de Liu, Ting și Zhou în 2008~\cite{liu2008iforest},
+adoptă o paradigmă diferită față de metodele clasice de detecție a anomaliilor (LOF, k-NN,
+One-Class SVM): în loc să modeleze distribuția normală și să identifice instanțele care se
+abat de la ea, izolează explicit anomaliile prin partiționări recursive aleatorii.
+
+Intuiția algoritmului se bazează pe două proprietăți ale anomaliilor: acestea sunt \textit{rare}
+(puține la număr față de instanțele normale) și \textit{diferite} (ocupă regiuni izolate ale
+spațiului de caracteristici). Ca urmare, ele pot fi separate de restul datelor printr-un număr
+semnificativ mai mic de partiționări aleatorii decât instanțele normale, care sunt dense și
+necesită multe partiționări pentru a fi izolate~\cite{liu2012isolation}.
+
+Algoritmul construiește o pădure de \textit{isolation trees} (iTrees). Fiecare iTree este un
+arbore binar construit prin selecția aleatorie repetată a unui atribut $q$ și a unui prag de
+partiționare $p$ ales uniform în intervalul de valori al atributului, până când fiecare instanță
+este izolată într-un nod frunză. O pădure constă din $t$ astfel de arbori, fiecare antrenat
+pe un subsample de dimensiune $\psi$; valorile implicite sunt $t = 100$, $\psi = 256$~\cite{liu2008iforest}.
+
+Lungimea căii $h(x)$ printr-un iTree reprezintă numărul de muchii parcurse de la rădăcină până
+la nodul de izolare al instanței $x$. Anomaliile, mai ușor de izolat, prezintă căi mai scurte;
+instanțele normale, mai greu de separat, prezintă căi mai lungi. Scorul de anomalie normalizat
+este definit ca:
+\[
+    s(x, \psi) = 2^{-\dfrac{E[h(x)]}{c(\psi)}}
+\]
+unde $E[h(x)]$ este media lungimilor de cale pe toți $t$ arborii, iar $c(\psi)$ este lungimea
+medie de cale așteptată pentru un arbore binar de căutare construit pe $\psi$
+instanțe~\cite{liu2012isolation}. Un scor $s \approx 1$ indică anomalie certă, $s \approx 0.5$
+instanță nedistinctivă, iar $s \approx 0$ comportament cu certitudine normal.
+
+Față de metodele bazate pe distanță sau densitate, iForest are complexitate liniară $O(n)$,
+memorie redusă prin subsampling fix și nu necesită date etichetate cu atacuri, proprietăți
+esențiale într-un context de securitate unde datele de atac sunt rare sau inexistente la
+momentul antrenării~\cite{liu2008iforest,liu2012isolation}.
+
+% ----------------------------------------------------------------
+\section{Setul de date BETH}
+% ----------------------------------------------------------------
+
+Setul de date BETH (\textit{BPF-Extended Tracking Honeypot}), prezentat de Highnam et al. la
+ICML Workshop on Uncertainty and Robustness in Deep Learning (2021)~\cite{highnam2021beth}, este
+unul dintre puținele seturi de date publice de evenimente de syscall colectate dintr-un scenariu
+real de honeypot în mediu cloud. Conține peste 8 milioane de evenimente capturate de pe 23 de
+gazde honeypot expuse pe internet timp de mai multe zile.
+
+Fiecare eveniment este reprezentat prin 14 caracteristici brute: \texttt{processId},
+\texttt{parentProcessId}, \texttt{userId}, \texttt{mountNamespace}, \texttt{eventId},
+\texttt{argsNum}, \texttt{returnValue} și altele, și este etichetat binar: benign (\texttt{evil=0})
+sau malițios (\texttt{evil=1}). Setul este partiționat 60/20/20 (antrenament/validare/test);
+important, datele de atac apar \textit{exclusiv} în partiția de test, reflectând paradigma
+realistă în care un model este antrenat pe comportament benign și evaluat ulterior pe atacuri.
+Atacul reprezentat constă în instanțierea unui nod de botnet: exploatare inițială, escaladare
+de privilegii și activitate de Command and Control (C\&C).
+
+Față de alte seturi de date sintetice sau de laborator, BETH prezintă avantajul că reflectă
+comportamentul real al unui atacator pe servere Linux expuse la internet, colectat prin aceeași
+tehnologie eBPF utilizată de instrumentele moderne de monitorizare. Isolation Forest atinge
+AUROC de 0.850 pe acest set, cel mai bun rezultat dintre modelele clasice nesupervizate testate
+în literatura de specialitate~\cite{highnam2021beth}.
+
+% ----------------------------------------------------------------
+\section{Redis Streams}
+% ----------------------------------------------------------------
+
+Redis Streams, introdusă în Redis 5.0 (2018), este o structură de date de tip jurnal
+\textit{append-only} cu acces aleator în timp $O(1)$, destinată scenariilor de mesagerie și
+procesare de evenimente în timp real~\cite{redis2024streams}. Fiecare intrare
+(\textit{entry}) dintr-un stream este identificată printr-un ID monoton crescător (compus din
+timestamp în milisecunde și un număr de secvență) și conține un set arbitrar de perechi
+câmp-valoare.
+
+Spre deosebire de Redis Pub/Sub,care pierde mesajele dacă niciun subscriber nu este activ
+în momentul publicării, Streams persistă intrările pe disc și le face disponibile pentru citire ulterioară. Mecanismul de \textit{consumer groups}
+permite mai multor consumatori să citească din același stream în paralel, fiecare primind un
+subset disjunct de mesaje; un mesaj rămâne în starea \textit{pending} până la confirmarea
+explicită prin comanda \texttt{XACK}, garantând că niciun eveniment nu se pierde în caz de
+cădere a consumatorului.
+
+Aceste caracteristici fac din Redis Streams o soluție potrivită pentru arhitecturi de tip
+pipeline în care un producător de evenimente (agentul de monitorizare) trebuie decuplat de
+consumatorul de analiză, cu garanții de livrare și fără introducerea complexității operaționale
+a unui broker distribuit dedicat.
+
+% ----------------------------------------------------------------
+\section{Containerizarea Docker și rolul în mecanismul honeypot}
+% ----------------------------------------------------------------
+
+Docker permite ambalarea unei aplicații împreună cu toate dependențele sale într-o unitate
+portabilă și reproductibilă numită \textit{container}~\cite{merkel2014docker}. Spre deosebire
+de mașinile virtuale, care virtualizează hardware-ul complet și rulează un nucleu propriu,
+containerele partajează nucleul sistemului gazdă și se izolează exclusiv prin mecanisme
+software ale nucleului Linux:
+
+\begin{itemize}
+  \item \textit{Namespaces}: creează viziuni izolate ale resurselor sistemului pentru fiecare
+    container: spații separate de PID (procesele unui container nu pot vedea procesele altui
+    container), rețea (interfețe și tabele de rutare proprii), sistem de fișiere
+    (\textit{mount namespace}), utilizatori (\textit{user namespace}) și hostname.
+  \item \textit{Control groups} (\textit{cgroups}): limitează cantitatea de resurse (CPU,
+    memorie, I/O pe disc, lățime de bandă) pe care un container o poate consuma, prevenind
+    consumul abuziv al resurselor gazdei.
+\end{itemize}
+
+Izolarea prin containere se dovedește utilă și în contextul apărării active: un container
+honeypot cu interacțiune ridicată poate expune un shell real și unelte uzuale, simulând un
+sistem Linux funcțional, fără ca activitatea atacatorului să afecteze infrastructura de
+producție. Tranzițional, regulile NAT (\texttt{iptables}, tabela \texttt{nat}, lanțul
+\texttt{PREROUTING}) pot intercepta traficul destinat unui serviciu legitim și îl pot devia
+transparent către portul corespunzător al containerului honeypot, înainte ca pachetele să
+ajungă la destinația originală. Din perspectiva atacatorului, sesiunea continuă fără întrerupere
+vizibilă, dar el interacționează cu un mediu controlat și monitorizat, izolat complet de
+sistemele de producție~\cite{spitzner2002honeypots,kerrisk2010linux}.
