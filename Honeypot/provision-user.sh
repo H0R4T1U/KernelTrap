@@ -17,7 +17,19 @@ mkdir -p "/home/$USERNAME/.ssh"
 cp /home/attacker/.ssh/authorized_keys "/home/$USERNAME/.ssh/authorized_keys" 2>/dev/null || true
 chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.ssh"
 chmod 700 "/home/$USERNAME/.ssh"
-chmod 600 "/home/$USERNAME/.ssh/authorized_keys"
+# The pivot's SIGUSR1 relocation (ssh -i /etc/hptrap/hp_key) depends on this key.
+# If the attacker template has no authorized_keys — e.g. the hp_attacker_home
+# volume was recreated after an image rebuild without re-running install.sh's
+# pubkey injection — warn LOUDLY instead of aborting on chmod (set -e would kill
+# the script here), otherwise the pivot fires but the relocation silently fails.
+if [ -s "/home/$USERNAME/.ssh/authorized_keys" ]; then
+    chmod 600 "/home/$USERNAME/.ssh/authorized_keys"
+else
+    echo "[!] provision-user: NO authorized_keys for '$USERNAME' — pivot SSH auth WILL FAIL." >&2
+    echo "    Fix: re-inject the pubkey into the honeypot (see Honeypot/install.sh step 3):" >&2
+    echo "    PUB=\$(cat /etc/hptrap/hp_key.pub); docker exec hp-shell sh -c \\" >&2
+    echo "      \"mkdir -p /home/attacker/.ssh && printf '%s\\\\n' '\$PUB' > /home/attacker/.ssh/authorized_keys && chown -R attacker:attacker /home/attacker/.ssh && chmod 700 /home/attacker/.ssh && chmod 600 /home/attacker/.ssh/authorized_keys\"" >&2
+fi
 
 # Seed home directory from the attacker template (fake dirs/files)
 cp -rn /home/attacker/. "/home/$USERNAME/" 2>/dev/null || true
