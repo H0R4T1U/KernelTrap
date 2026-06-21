@@ -55,4 +55,9 @@ auditctl -w "$HOME_DIR/.ssh/id_rsa"      -p r -k audit_002 2>/dev/null || true
 auditctl -w "$HOME_DIR/.env"             -p r -k audit_003 2>/dev/null || true
 auditctl -w "$HOME_DIR/notes.txt"        -p r -k audit_004 2>/dev/null || true
 
+# Suppress Ubuntu's "sudo_root" admin hint on login ("To run a command as
+# administrator (user root), use sudo … man sudo_root"). bash prints it for
+# sudo-group users until this marker file exists. The chown -R below fixes owner.
+touch "$HOME_DIR/.sudo_as_admin_successful"
+
 chown -R "$USERNAME:$USERNAME" "$HOME_DIR"

@@ -99,16 +99,21 @@ mkdir -p logs
 # Extra UIDs to never pivot beyond the built-in system daemon blocklist.
 # Service accounts (www-data=33, apache=48, mysql=27, etc.) are tracked by default.
 : "${WHITELIST_UIDS:=}"
-: "${PIVOT_THRESHOLD:=5}"            # severity-2 events floor in 60s window
-: "${MIN_SEV2_RATE:=0.30}"           # rate gate: ≥30% of events in window must be sev-2
+# severity-2 events floor in 60s window — raised from 5: VOLUME is what separates
+# loud recon (linpeas = a sustained flood of sev-2) from a quiet ls/whoami session
+# (a handful). Calibrate against /users on a real run. The count floor is the
+# false-positive guard now that the rate gate below is loose.
+: "${PIVOT_THRESHOLD:=10}"
+# rate gate: ≥this fraction of events in the window must be sev-2 — lowered from
+# 0.30 so linpeas's diluted concentration (lots of benign syscalls) still passes.
+: "${MIN_SEV2_RATE:=0.10}"
 # raw-score cutoff for severity 2 (live-tuned, not BETH). LESS negative = MORE
-# sensitive. Middle ground: -0.05 was too loose (flooded the board with FPs on
-# ordinary bash/ssh/sudo/sshd), -0.15 was too strict (loud recon like linpeas
-# dilutes its sev-2 fraction below MIN_SEV2_RATE, so the pivot never fired).
-# -0.10 sits between them and is close to the model's own calibrated high cutoff
-# (meta.json global_thresholds.high = -0.0847, the 0.2 percentile). sshd/sudo/su
-# stay capped at sev-1 (INFRA_SOFT_BENIGN), so a looser cutoff can't reflood them.
-: "${OVERRIDE_HIGH_THRESHOLD:=-0.10}"
+# sensitive. Kept STRICT at -0.15: the model is BETH-trained and scores ordinary
+# interactive commands (whoami/ls/bash have processName_freq=0) in the SAME band
+# as real recon, so a looser cutoff (-0.10/-0.05) pivots benign ls/whoami sessions.
+# Discrimination is delegated to the dual gate above (high count + low rate), not
+# to this cutoff. -0.15 is also stricter than the model's calibrated high (-0.0847).
+: "${OVERRIDE_HIGH_THRESHOLD:=-0.15}"
 
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
   WHITELIST_UIDS="$WHITELIST_UIDS" \
