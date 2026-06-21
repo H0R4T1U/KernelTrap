@@ -63,6 +63,12 @@ class SlidingWindowTracker:
         self._windows: Dict[Tuple[str, int], UserWindow] = {}
         self._pending_pivots: List[Tuple[str, int, str]] = []
 
+        # Periodic sweep so windows for users that went silent don't linger
+        # forever (otherwise _windows grows once per distinct (host, uid) ever
+        # seen). Sweeps about once per window length.
+        self._last_prune: float = time.time()
+        self._prune_interval: float = float(window_seconds)
+
     def feed(
         self,
         hostname: str,
@@ -93,6 +99,11 @@ class SlidingWindowTracker:
         while win.events and win.events[0][0] < cutoff:
             win.events.popleft()
 
+        # Drop windows for users that have gone silent (cheap, amortized).
+        if now - self._last_prune >= self._prune_interval:
+            self._prune(now)
+            self._last_prune = now
+
         # Trigger: both gates must pass.
         sev2_count = sum(1 for _, s in win.events if s >= self._min_severity)
         if sev2_count < self._threshold:
@@ -108,6 +119,24 @@ class SlidingWindowTracker:
         win.pivoted = True
         trigger = f"rate+threshold (sev2={sev2_count}/{total}={rate:.0%})"
         self._pending_pivots.append((hostname, user_id, trigger))
+        # Pivoted users are ignored from here on (feed() returns early), so the
+        # accumulated events serve no purpose — free them but keep the small
+        # window entry so user_states() can still report the pivoted state.
+        win.events.clear()
+
+    def _prune(self, now: float):
+        """Evict stale events and drop empty, non-pivoted windows."""
+        cutoff = now - self._window
+        stale: List[Tuple[str, int]] = []
+        for key, win in self._windows.items():
+            if win.pivoted:
+                continue  # tiny (empty deque); retained for visibility
+            while win.events and win.events[0][0] < cutoff:
+                win.events.popleft()
+            if not win.events:
+                stale.append(key)
+        for key in stale:
+            del self._windows[key]
 
     def drain_pivots(self) -> List[Tuple[str, int, str]]:
         pending = self._pending_pivots[:]

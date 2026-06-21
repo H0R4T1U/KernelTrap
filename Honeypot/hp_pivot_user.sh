@@ -2,10 +2,15 @@
 # Usage: hp_pivot_user <username>
 # Sends SIGUSR1 to all interactive bash sessions for that user and bans
 # the source IP of each session via iptables.
+#
+# Intentionally NOT using `set -e`: the per-session loop below is written to
+# tolerate individual command failures (a missing SSH_CONNECTION, an iptables
+# hiccup) and keep handling the remaining sessions. We still want -u/pipefail.
+set -uo pipefail
 
 IPTABLES=$(command -v iptables || echo /usr/sbin/iptables)
 
-USER_TARGET="$1"
+USER_TARGET="${1:-}"
 if [ -z "$USER_TARGET" ]; then
   echo "Usage: $0 <username>" >&2
   exit 1
@@ -23,7 +28,9 @@ fi
 # The key is copied inside the container from the attacker template — no arg needed.
 if docker ps --format '{{.Names}}' | grep -q '^hp-shell$'; then
   echo "Provisioning user $USER_TARGET in honeypot container..."
-  docker exec hp-shell /usr/local/sbin/provision-user.sh "$USER_TARGET"
+  if ! docker exec hp-shell /usr/local/sbin/provision-user.sh "$USER_TARGET"; then
+    echo "[!] Provisioning failed for $USER_TARGET in hp-shell — pivoting anyway" >&2
+  fi
 fi
 
 for PID in $PIDS; do

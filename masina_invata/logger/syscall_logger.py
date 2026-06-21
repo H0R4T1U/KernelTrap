@@ -24,6 +24,7 @@ import os
 import pwd
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -121,6 +122,13 @@ SYSCALL_TO_ID = {
 }
 
 ID_TO_SYSCALL = {v: k for k, v in SYSCALL_TO_ID.items()}
+
+# Connect-family events whose destination we inspect to suppress the agent's
+# own Redis backchannel traffic (see SyscallLogger._is_redis_backchannel).
+CONNECT_EVENT_NAMES = {
+    "connect", "net_tcp_connect", "tcp_connect",
+    "security_socket_connect",
+}
 
 
 @dataclass
@@ -567,6 +575,28 @@ class SyscallLogger:
         self._own_ppid: int = os.getppid()
         print(f"[Agent] Self-PID exclude: pid={self._own_pid}, ppid={self._own_ppid}", file=sys.stderr)
 
+        # Drop the monitoring stack's own Redis backchannel traffic.
+        #
+        # Tracee runs with --pid=host, so it observes EVERY host process,
+        # including the agent's (and, on an all-in-one box, the central
+        # server's uvicorn) python3 talking to Redis. Each batch push fires
+        # security_socket_connect + net_tcp_connect, which would otherwise be
+        # forwarded and re-scored as anomalous — an infinite feedback loop.
+        # PID exclusion alone misses sibling python processes and is fragile
+        # across the docker/PID-namespace boundary, so we additionally drop any
+        # connect-family event whose destination is the Redis host:port.
+        self._redis_port: int = redis_port
+        self._redis_addrs: Set[str] = set()
+        if redis_host:
+            self._redis_addrs.add(str(redis_host))
+            try:
+                for res in socket.getaddrinfo(redis_host, redis_port, proto=socket.IPPROTO_TCP):
+                    self._redis_addrs.add(res[4][0])
+            except OSError:
+                pass
+            print(f"[Agent] Redis backchannel exclude: port={self._redis_port}, "
+                  f"addrs={sorted(self._redis_addrs)}", file=sys.stderr)
+
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
@@ -660,11 +690,44 @@ class SyscallLogger:
         if self._own_ppid and (event.processId == self._own_ppid or event.parentProcessId == self._own_ppid):
             return
 
-        # Only forward to the server if this UID has an active SSH session.
-        # Events from local/physical users and background daemons are dropped here.
-        if self._ssh_uids and event.userId not in self._ssh_uids:
+        # Drop the monitoring stack's own Redis backchannel chatter (the
+        # python3 *_connect spam) regardless of which process emitted it.
+        if self._is_redis_backchannel(event):
+            return
+
+        # Forward to the server only if this UID has an active SSH (pts) session.
+        # Fail-CLOSED: when `who` reports no SSH sessions the set is empty and
+        # every event is dropped — we forward nothing until someone logs in over
+        # SSH. This deliberately keeps console/local/background daemon activity
+        # out of the pipeline; only interactive SSH users are monitored.
+        if event.userId not in self._ssh_uids:
             return
         self._redis_batch.append(event)
+
+    def _is_redis_backchannel(self, event: SyscallEvent) -> bool:
+        """True if ``event`` is a connection to our own Redis backchannel.
+
+        Matches connect-family events whose argument blob references the Redis
+        destination port (with a matching host address when one is resolvable).
+        This suppresses the monitoring stack's own python3 ``*_connect`` traffic
+        without dropping genuine connects an attacker might make elsewhere.
+        """
+        if not self._redis_addrs:
+            return False
+        if event.eventName not in CONNECT_EVENT_NAMES:
+            return False
+        args = event.args or ""
+        # Destination port must appear as a standalone number in the args.
+        if not re.search(rf"\b{self._redis_port}\b", args):
+            return False
+        # If we resolved concrete addresses, require one of them too, so an
+        # unrelated connect that merely uses port 6379 to some other host is
+        # still forwarded. Fall back to port-only when no address is present.
+        if any(addr in args for addr in self._redis_addrs):
+            return True
+        # Loopback connects (all-in-one box) rarely echo the literal IP in the
+        # arg struct; treat a port match as sufficient there.
+        return any(a in ("localhost", "127.0.0.1", "::1") for a in self._redis_addrs)
 
     def _print_stats(self):
         print(f"[STATS] Events forwarded to central server: {self._event_count}", file=sys.stderr)

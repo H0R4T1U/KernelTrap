@@ -200,13 +200,16 @@ class _RollingCache:
     """LRU per-process. Max ``max_keys`` distinct (host, uid, pid) tuples;
     oldest evicted when capacity hits."""
 
-    __slots__ = ("_window", "_max", "_cache")
+    __slots__ = ("_window", "_max", "_cache", "_last_ts")
 
     def __init__(self, window_s: float = 60.0, max_keys: int = 50_000):
         self._window = window_s
         self._max = max_keys
         # key -> deque of (timestamp, eventId, returnValue)
         self._cache: "OrderedDict[Tuple[str, int, int], Deque[Tuple[float, int, float]]]" = OrderedDict()
+        # key -> absolute timestamp of the previous event for that key, kept
+        # independent of the 60s window so inter-arrival survives long gaps.
+        self._last_ts: "Dict[Tuple[str, int, int], float]" = {}
 
     def update_and_features(
         self, host: str, uid: int, pid: int, ts: float, event_id: int, ret_val: float,
@@ -215,7 +218,8 @@ class _RollingCache:
         dq = self._cache.get(key)
         if dq is None:
             if len(self._cache) >= self._max:
-                self._cache.popitem(last=False)
+                old_key, _ = self._cache.popitem(last=False)
+                self._last_ts.pop(old_key, None)
             dq = deque()
             self._cache[key] = dq
         else:
@@ -225,7 +229,12 @@ class _RollingCache:
         while dq and ts - dq[0][0] > self._window:
             dq.popleft()
 
-        prev_ts = dq[-1][0] if dq else ts
+        # inter-arrival is measured against the ABSOLUTE previous event for this
+        # key (matching training, which diffs consecutive sorted rows) — NOT the
+        # last element still inside the window, which a >60s gap would have
+        # evicted, yielding a spurious 0.
+        prev_ts = self._last_ts.get(key, ts)
+        self._last_ts[key] = ts
         dq.append((ts, event_id, ret_val))
 
         # Rolling 5s features.
@@ -261,8 +270,11 @@ class Scorer:
         meta_path = self._model_dir / "meta.json"
         self._meta: Dict[str, Any] = {}
         if meta_path.exists():
-            with open(meta_path) as f:
-                self._meta = json.load(f)
+            try:
+                with open(meta_path) as f:
+                    self._meta = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                raise RuntimeError(f"Failed to read model metadata {meta_path}: {e}") from e
 
         # Global fallback thresholds (used when per-entity thresholds are absent).
         # Tunable via env vars OVERRIDE_LOW_THRESHOLD / OVERRIDE_HIGH_THRESHOLD —
@@ -276,6 +288,9 @@ class Scorer:
         self._entity_thresholds: Dict[str, Dict[str, float]] = self._meta.get("thresholds", {})
 
         self._host_col: Optional[str] = self._meta.get("host_col")
+        # Entity-key grouping must follow how the model was TRAINED, not the
+        # mere presence of a host column (host_col may be set informationally).
+        self._group_mode: str = self._meta.get("group_mode", "user")
 
         # Frequency-encoding tables (keys are str(int) for eventId/mountNamespace,
         # lower-case strings for processName).
@@ -299,7 +314,7 @@ class Scorer:
         self._rolling = _RollingCache(window_s=60.0, max_keys=50_000)
 
     def _entity_key(self, event: Dict[str, Any], hostname: str) -> str:
-        if self._host_col:
+        if self._group_mode == "host_user":
             return f"{hostname}:{event.get('userId', 0)}"
         return str(event.get("userId", 0))
 
@@ -366,6 +381,11 @@ class Scorer:
         results = []
         for i, event in enumerate(events):
             raw = float(raw_scores[i])
+            # A non-finite score (NaN/inf from a degenerate row) must not be
+            # compared against thresholds — treat it as benign rather than
+            # silently mis-tiering it.
+            if not np.isfinite(raw):
+                raw = 0.0
             entity_key = self._entity_key(event, hostname)
             low_thresh, high_thresh = self._thresholds_for(entity_key)
 
@@ -397,6 +417,9 @@ class Scorer:
                 "processName": event.get("processName", ""),
                 "eventName": event.get("eventName", ""),
                 "hostname": hostname,
+                # Carry the source event time through so the dashboard shows when
+                # the event actually happened, not when it was scored.
+                "timestamp": float(event.get("timestamp", 0.0) or 0.0),
             }
             if severity_capped_at is not None:
                 result["severity_capped_at"] = severity_capped_at

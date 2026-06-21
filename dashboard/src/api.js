@@ -3,19 +3,24 @@
 // Relative paths resolve against window.location.origin, hitting the API directly.
 const BASE = "";
 
-export async function fetchAgents() {
-  const r = await fetch(`${BASE}/agents`);
+// Throw on non-2xx so callers' catch blocks fire instead of choking on an HTML
+// error page parsed as JSON.
+async function getJSON(path) {
+  const r = await fetch(`${BASE}${path}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${path}`);
   return r.json();
+}
+
+export async function fetchAgents() {
+  return getJSON("/agents");
 }
 
 export async function fetchUsers() {
-  const r = await fetch(`${BASE}/users`);
-  return r.json();
+  return getJSON("/users");
 }
 
 export async function fetchPivotHistory() {
-  const r = await fetch(`${BASE}/pivot-history`);
-  return r.json();
+  return getJSON("/pivot-history");
 }
 
 export async function triggerPivot(hostname, userId) {

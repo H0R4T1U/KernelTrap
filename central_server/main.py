@@ -30,7 +30,7 @@ import pwd
 import sys
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Deque, Dict, List, Optional, Set
 
 import numpy as np
 import redis.asyncio as aioredis
@@ -101,8 +101,10 @@ _tracker: Optional[SlidingWindowTracker] = None
 # Last-read stream IDs per host; "0" means read from beginning of stream
 _stream_cursors: Dict[str, str] = {}
 
-# Dashboard state
-_pivot_history: List[Dict[str, Any]] = []
+# Dashboard state. Bounded so a long-running server can't grow this without
+# limit; /pivot-history returns the most recent entries (10k is ample for
+# post-incident review).
+_pivot_history: Deque[Dict[str, Any]] = deque(maxlen=10_000)
 _ws_clients: Set[WebSocket] = set()
 _log_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
 # hostname -> deque of event timestamps (last 60 s) for events/min calculation
@@ -237,8 +239,12 @@ async def _event_consumer_loop():
             for stream_key, messages in results:
                 hostname = stream_key.replace("events.", "")
                 for msg_id, fields in messages:
-                    _stream_cursors[hostname] = msg_id
+                    # Advance the cursor only AFTER the message is fully
+                    # processed. If _process_message raises, the cursor stays
+                    # put so the outer handler re-reads this message next loop
+                    # (at-least-once) instead of silently dropping the batch.
                     await _process_message(hostname, fields)
+                    _stream_cursors[hostname] = msg_id
 
         except asyncio.CancelledError:
             break

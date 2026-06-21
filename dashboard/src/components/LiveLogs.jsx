@@ -18,10 +18,14 @@ export default function LiveLogs() {
   const [hostFilter, setHostFilter] = useState("all");
   const bottomRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const seqRef = useRef(0);
 
   useWebSocket(WS, (event) => {
+    // Tag each event with a monotonic id so React keys stay stable as the list
+    // is appended-to and sliced (array index would reuse the wrong rows).
+    const tagged = { ...event, _seq: seqRef.current++ };
     setEvents((prev) => {
-      const next = [...prev, event];
+      const next = [...prev, tagged];
       return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
     });
   });
@@ -76,8 +80,8 @@ export default function LiveLogs() {
       </div>
       <div className="log-body">
         {visible.length === 0 && <p className="dim">Waiting for events…</p>}
-        {visible.map((e, i) => (
-          <div key={i} className={`log-row ${SEV_CLASS[e.severity] || ""}`}>
+        {visible.map((e) => (
+          <div key={e._seq} className={`log-row ${SEV_CLASS[e.severity] || ""}`}>
             <span className="log-time">{fmtTime(e.timestamp ?? Date.now() / 1000)}</span>
             <span className={`log-sev sev-badge-${e.severity}`}>{SEV_LABEL[e.severity] ?? "?"}</span>
             <span className="log-host dim">{e.hostname}</span>

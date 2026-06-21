@@ -10,6 +10,7 @@ import re
 import select
 import socket
 import subprocess
+import sys
 import time
 
 import redis
@@ -91,6 +92,7 @@ def main() -> None:
         if ready:
             raw_line = proc.stdout.readline()
             if not raw_line:
+                print("[hp-monitor] tail exited (EOF); restarting", file=sys.stderr, flush=True)
                 break  # tail exited — outer loop will restart main()
 
             if "type=SYSCALL" in raw_line:
@@ -125,5 +127,6 @@ if __name__ == "__main__":
     while True:
         try:
             main()
-        except Exception:
+        except Exception as e:
+            print(f"[hp-monitor] main() crashed: {e!r}; restarting in 5s", file=sys.stderr, flush=True)
             time.sleep(5)

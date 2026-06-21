@@ -27,7 +27,7 @@ sus, evil
 Examples:
 
 TRAIN (per-user):
-  python beth_iforest_user2tier.py train \
+  python beth_iforest.py train \
     --train-csv labelled_training_data.csv \
     --val-csv labelled_validation_data.csv \
     --out-dir beth_iforest_model_user2tier \
@@ -37,12 +37,12 @@ TRAIN (per-user):
     --n-jobs 32
 
 TEST:
-  python beth_iforest_user2tier.py test \
+  python beth_iforest.py test \
     --model-dir beth_iforest_model_user2tier \
     --test-csv labelled_testing_data.csv
 
 PREDICT (outside logs):
-  python beth_iforest_user2tier.py predict \
+  python beth_iforest.py predict \
     --model-dir beth_iforest_model_user2tier \
     --csv my_new_logs.csv \
     --out-csv my_new_logs_scored.csv \
@@ -1152,7 +1152,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p_test.add_argument("--test-csv", required=True)
     p_test.add_argument("--chunksize", type=int, default=500_000)
 
-    p_pred = sub.add_parser("predict", help="Score any CSV with the 7 feature columns; outputs severity tiers per user.")
+    p_pred = sub.add_parser("predict", help="Score any CSV with the expected BETH columns; outputs severity tiers per entity.")
     p_pred.add_argument("--model-dir", required=True)
     p_pred.add_argument("--csv", required=True)
     p_pred.add_argument("--out-csv", required=True)

@@ -47,7 +47,7 @@ export default function PivotHistory() {
           </thead>
           <tbody>
             {pivots.map((p, i) => (
-              <tr key={i}>
+              <tr key={`${p.timestamp}-${p.hostname}-${p.user_id}-${i}`}>
                 <td className="dim">{fmtTs(p.timestamp)}</td>
                 <td>{p.hostname}</td>
                 <td>{p.user_id}</td>

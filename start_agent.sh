@@ -52,24 +52,17 @@ if pgrep -f "syscall_logger.py" > /dev/null 2>&1; then
 fi
 
 mkdir -p logs
-sudo nohup bash -c "source '$REPO_DIR/.venv/bin/activate' && docker logs --tail 0 -f tracee \
+echo
+echo "[*] Agent running in the foreground. Press Ctrl+C to stop it."
+echo "[*] Output is mirrored to logs/agent.log"
+echo
+
+# Run the agent in the FOREGROUND, attached to this terminal: Ctrl+C stops it
+# cleanly and closing the terminal stops it too. `tee` mirrors output to the
+# log file so there is still a persistent record. `exec` replaces this shell so
+# the pipeline becomes the script's foreground process (no orphaned wrapper).
+exec sudo bash -c "set -o pipefail; source '$REPO_DIR/.venv/bin/activate' && docker logs --tail 0 -f tracee \
   | python '$REPO_DIR/masina_invata/logger/syscall_logger.py' \
       --source tracee \
       --redis-host '$SERVER_IP' \
-      --redis-port '$REDIS_PORT'" \
-  > logs/agent.log 2>&1 &
-disown
-
-sleep 2
-if pgrep -f "syscall_logger.py" > /dev/null; then
-  echo "    syscall_logger started (PID $(pgrep -f syscall_logger.py))"
-else
-  echo "    [!] syscall_logger FAILED to start. Last log lines:"
-  tail -20 logs/agent.log
-  exit 1
-fi
-echo
-echo "[*] Agent running. Streaming logs (Ctrl+C stops streaming but agent keeps running)."
-echo "[*] To stop agent: sudo pkill -f syscall_logger"
-echo
-tail -f logs/agent.log
+      --redis-port '$REDIS_PORT' 2>&1 | tee '$REPO_DIR/logs/agent.log'"

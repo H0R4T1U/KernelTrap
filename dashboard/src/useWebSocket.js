@@ -21,7 +21,15 @@ export function useWebSocket(url, onMessage) {
     ws.onmessage = (e) => {
       try {
         onMessageRef.current(JSON.parse(e.data));
-      } catch {}
+      } catch (err) {
+        console.warn("useWebSocket: dropping unparseable message", err);
+      }
+    };
+
+    ws.onerror = (err) => {
+      // Surface the error; onclose fires right after and drives the reconnect,
+      // so we deliberately do NOT close() here (that would double the schedule).
+      console.warn("useWebSocket: socket error", err);
     };
 
     ws.onclose = () => {
