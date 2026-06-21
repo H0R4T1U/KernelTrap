@@ -104,7 +104,7 @@ class SlidingWindowTracker:
             self._prune(now)
             self._last_prune = now
 
-        # Trigger: both gates must pass.
+        # Trigger: both gates must pass — absolute floor AND concentration rate.
         sev2_count = sum(1 for _, s in win.events if s >= self._min_severity)
         if sev2_count < self._threshold:
             return  # absolute floor not reached yet
@@ -116,8 +116,11 @@ class SlidingWindowTracker:
         if rate < self._min_sev2_rate:
             return  # high-severity activity not concentrated enough
 
+        self._fire_pivot(win, hostname, user_id,
+                         f"rate+threshold (sev2={sev2_count}/{total}={rate:.0%})")
+
+    def _fire_pivot(self, win: "UserWindow", hostname: str, user_id: int, trigger: str):
         win.pivoted = True
-        trigger = f"rate+threshold (sev2={sev2_count}/{total}={rate:.0%})"
         self._pending_pivots.append((hostname, user_id, trigger))
         # Pivoted users are ignored from here on (feed() returns early), so the
         # accumulated events serve no purpose — free them but keep the small
