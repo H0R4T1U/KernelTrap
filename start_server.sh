@@ -102,11 +102,10 @@ mkdir -p logs
 : "${PIVOT_THRESHOLD:=5}"            # severity-2 events floor in 60s window
 : "${MIN_SEV2_RATE:=0.30}"           # rate gate: ≥30% of events in window must be sev-2
 # raw-score cutoff for severity 2 (live-tuned, not BETH). LESS negative = MORE
-# sensitive (more events become sev-2). Calibrate empirically: run linpeas as a
-# normal user, watch the raw_score distribution (/model/health or scores.<host>),
-# and set this just above linpeas's score cluster so its events are sev-2 while
-# idle activity stays sev-0. -0.15 was too strict to flag recon; start at -0.05.
-: "${OVERRIDE_HIGH_THRESHOLD:=-0.05}"
+# sensitive. -0.05 was far too loose: it flagged ordinary bash/ssh/sudo/sshd
+# activity as HIGH and flooded the board. The ns->s timestamp fix already
+# restored the burst features that flag recon, so keep the calibrated -0.15.
+: "${OVERRIDE_HIGH_THRESHOLD:=-0.15}"
 
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
   WHITELIST_UIDS="$WHITELIST_UIDS" \
