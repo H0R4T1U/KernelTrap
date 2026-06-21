@@ -10,10 +10,15 @@ RUN apt-get update && \
 # SSH daemon run dir
 RUN mkdir -p /run/sshd /var/run/sshd
 
-# decoy user inside the container
+# decoy user inside the container.
+# The .sudo_as_admin_successful markers (in /etc/skel, copied by `useradd -m`,
+# and in the attacker template home) suppress the Ubuntu "sudo_root" login
+# banner for every provisioned user. provision-user.sh also touches it.
 RUN useradd -ms /bin/bash attacker && \
     echo 'attacker:Password123!' | chpasswd && \
-    usermod -aG sudo attacker
+    usermod -aG sudo attacker && \
+    touch /etc/skel/.sudo_as_admin_successful /home/attacker/.sudo_as_admin_successful && \
+    chown attacker:attacker /home/attacker/.sudo_as_admin_successful
 
 # simple fake dirs
 RUN mkdir -p /opt/app /var/www/html /data && \
