@@ -28,10 +28,10 @@ intruziunilor} (\textit{Intrusion Prevention System}, IPS).
 Din perspectiva punctului de colectare a datelor, sistemele IDS se clasifică în două mari categorii:
 
 \begin{itemize}
-  \item \textbf{NIDS} (\textit{Network-based IDS}): monitorizează traficul de rețea la nivel de
+  \item NIDS (\textit{Network-based IDS}): monitorizează traficul de rețea la nivel de
     pachete, identificând tipare de atac (scanări de porturi, flood-uri, exploit-uri cunoscute)
     fără acces la starea internă a gazdelor individuale.
-  \item \textbf{HIDS} (\textit{Host-based IDS}): rulează direct pe gazda monitorizată și analizează
+  \item HIDS (\textit{Host-based IDS}): rulează direct pe gazda monitorizată și analizează
     evenimente produse la nivelul sistemului de operare (apeluri de sistem, jurnale de aplicație,
     accesuri la fișiere și modificări de configurație), oferind vizibilitate asupra comportamentului
     proceselor individuale~\cite{liu2018hids}.
@@ -117,7 +117,47 @@ procesorului.
 Starea este partajată între programe și user space prin \textit{eBPF Maps}, structuri cheie-valoare
 rezidente în kernel space, accesibile din ambele domenii. Apelurile din programele eBPF către
 funcțiile nucleului se fac exclusiv prin \textit{helper functions} cu interfață stabilă, garantând
-compatibilitatea între versiuni diferite de kernel.
+compatibilitatea între versiuni diferite de kernel. Figura~\ref{fig:cap2-ebpf} sintetizează acest
+flux, de la apelul de sistem produs în spațiul utilizator până la citirea evenimentului filtrat,
+într-un map, de către un agent din spațiul utilizator precum Tracee.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      box/.style={rectangle, rounded corners=3pt, draw, line width=0.4pt,
+        minimum width=3cm, minimum height=1cm, align=center, inner sep=3pt},
+      flow/.style={-{Stealth[length=2.2mm]}, line width=0.5pt, gray!70!black},
+      lbl/.style={font=\scriptsize\itshape, text=black!65},
+    ]
+    \definecolor{cap2ssh}{RGB}{230,241,251}
+    \definecolor{cap2tracee}{RGB}{225,245,238}
+    \definecolor{cap2gray}{RGB}{241,239,232}
+    \definecolor{cap2prog}{RGB}{238,237,254}
+
+    \draw[dashed, gray!60, line width=0.4pt] (-2,-0.75) rectangle (11,1.05);
+    \node[anchor=north west, font=\scriptsize, text=gray!70!black] at (-1.95,1.02) {spațiul utilizator};
+    \draw[dashed, gray!60, line width=0.4pt] (-2,-3.85) rectangle (11,-2.2);
+    \node[anchor=north west, font=\scriptsize, text=gray!70!black] at (-1.95,-2.25) {spațiul nucleu};
+    \draw[dashed, gray!55, line width=0.4pt] (-2,-1.5) -- (11,-1.5);
+    \node[font=\scriptsize\itshape, text=black!60] at (4.5,-1.3) {interfața de apeluri de sistem};
+
+    \node[box, fill=cap2ssh]    (ssh)    at (0,0)    {\textbf{Sesiune SSH}\\[1pt]\scriptsize proces utilizator};
+    \node[box, fill=cap2tracee] (tracee) at (9,0)    {\textbf{Tracee}\\[1pt]\scriptsize agent user-space};
+    \node[box, fill=cap2gray]   (tp)     at (0,-3)   {\textbf{Tracepoint}\\[1pt]\scriptsize hook syscall};
+    \node[box, fill=cap2prog]   (prog)   at (4.5,-3) {\textbf{Program eBPF}\\[1pt]\scriptsize filtrare în kernel};
+    \node[box, fill=cap2gray]   (map)    at (9,-3)   {\textbf{Map eBPF}\\[1pt]\scriptsize tampon partajat};
+
+    \draw[flow] (ssh.south) -- node[lbl, left] {apel de sistem} (tp.north);
+    \draw[flow] (tp.east) -- (prog.west);
+    \draw[flow] (prog.east) -- (map.west);
+    \draw[flow] (map.north) -- node[lbl, right] {citire map} (tracee.south);
+  \end{tikzpicture}
+  \caption[Fluxul de colectare prin eBPF]{Fluxul de colectare prin eBPF. Un apel de sistem produs de o sesiune SSH traversează
+  interfața de apeluri de sistem; în nucleu, un program eBPF atașat la un tracepoint filtrează
+  evenimentul și îl scrie într-un map, de unde agentul Tracee îl citește în spațiul utilizator.}
+  \label{fig:cap2-ebpf}
+\end{figure}
 
 Înainte de eBPF, instrumentarea nucleului la runtime necesita una din două abordări, ambele
 problematice în producție: modificarea codului sursă al nucleului (imposibilă fără acces la sursă
@@ -227,7 +267,52 @@ Intuiția algoritmului se bazează pe două proprietăți ale anomaliilor: acest
 (puține la număr față de instanțele normale) și \textit{diferite} (ocupă regiuni izolate ale
 spațiului de caracteristici). Ca urmare, ele pot fi separate de restul datelor printr-un număr
 semnificativ mai mic de partiționări aleatorii decât instanțele normale, care sunt dense și
-necesită multe partiționări pentru a fi izolate~\cite{liu2012isolation}.
+necesită multe partiționări pentru a fi izolate~\cite{liu2012isolation}
+(Figura~\ref{fig:cap2-iforest}).
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      boxc/.style={rectangle, rounded corners=3pt, draw, line width=0.4pt,
+        minimum width=4.4cm, minimum height=1.1cm, align=center, inner sep=3pt},
+      flow/.style={-{Stealth[length=2.2mm]}, line width=0.5pt, gray!70!black},
+    ]
+    \definecolor{cap2anom}{RGB}{226,75,74}
+    \definecolor{cap2norm}{RGB}{55,138,221}
+    \definecolor{cap2redbox}{RGB}{252,235,235}
+    \definecolor{cap2bluebox}{RGB}{230,241,251}
+
+    \node[anchor=south west, font=\scriptsize, text=black!65] at (0,4.55) {spațiul caracteristicilor};
+    \draw[line width=0.4pt, black!55] (0,0) rectangle (5,4.5);
+
+    \draw[gray!55, line width=0.3pt] (2.2,0) -- (2.2,4.5);
+    \draw[gray!55, line width=0.3pt] (0,3.0) -- (2.2,3.0);
+    \draw[gray!55, line width=0.3pt] (3.5,0) -- (3.5,4.5);
+    \draw[gray!55, line width=0.3pt] (2.2,2.0) -- (5,2.0);
+    \draw[gray!55, line width=0.3pt] (4.2,2.0) -- (4.2,4.5);
+    \draw[gray!55, line width=0.3pt] (2.85,0) -- (2.85,2.0);
+
+    \draw[cap2anom, dashed, line width=0.5pt] (0,3.0) rectangle (2.2,4.5);
+    \fill[cap2anom] (1.0,3.6) circle (0.09);
+    \node[font=\scriptsize, text=cap2anom] at (1.0,4.15) {anomalie};
+
+    \foreach \p in {(3.0,1.5),(3.4,1.3),(3.7,1.6),(3.2,1.0),(3.6,0.9),(3.9,1.3),(3.3,1.8),(3.0,1.0),(4.0,1.7),(4.2,1.0),(2.9,1.7),(4.1,0.8)}
+      \fill[cap2norm] \p circle (0.08);
+    \node[font=\scriptsize, text=cap2norm!70!black] at (3.5,0.35) {puncte normale};
+
+    \node[boxc, fill=cap2redbox,  draw=cap2anom]      (short) at (8.7,3.4) {\textbf{Cale scurtă de izolare}\\[1pt]\scriptsize puține tăieturi = anomalie};
+    \node[boxc, fill=cap2bluebox, draw=blue!45!black] (long)  at (8.7,1.2) {\textbf{Cale lungă de izolare}\\[1pt]\scriptsize multe tăieturi = normal};
+
+    \draw[flow] (5,3.6) -- (short.west);
+    \draw[flow] (5,1.4) -- (long.west);
+  \end{tikzpicture}
+  \caption[Intuiția algoritmului Isolation Forest]{Intuiția algoritmului Isolation Forest. O anomalie, situată într-o regiune rară a
+  spațiului de caracteristici, este izolată din puține tăieturi aleatorii (cale scurtă în arbore),
+  în timp ce un punct dintr-un cluster dens necesită multe tăieturi (cale lungă) pentru a fi
+  separat.}
+  \label{fig:cap2-iforest}
+\end{figure}
 
 Algoritmul construiește o pădure de \textit{isolation trees} (iTrees). Fiecare iTree este un
 arbore binar construit prin selecția aleatorie repetată a unui atribut $q$ și a unui prag de

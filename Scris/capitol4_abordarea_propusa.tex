@@ -40,25 +40,25 @@ Sistemul KernelTrap este structurat în patru componente funcționale, distribui
 mașini fizice sau virtuale și interconectate prin Redis Streams:
 
 \begin{enumerate}
-  \item \textbf{Agentul de colectare} (\textit{agent}) rulează pe fiecare gazdă protejată și
+  \item Agentul de colectare (\textit{agent}) rulează pe fiecare gazdă protejată și
     captează evenimentele de syscall produse de sesiunile SSH active, normalizează și filtrează
     datele, după care le publică pe un stream Redis dedicat gazdei. Este componenta de
     telemetrie a IPS-ului: ușoară, fără stare și fără rol decizional.
 
-  \item \textbf{Serverul central de analiză și decizie} (\textit{central server}) reprezintă
+  \item Serverul central de analiză și decizie (\textit{central server}) reprezintă
     creierul IPS-ului: agregate fluxurile de la toți agenții, atribuie un scor fiecărui eveniment cu
     modelul Isolation Forest, aplică mecanismul de fereastră glisantă și decide automat când
     un utilizator depășește pragul de anomalie. Serverul emite comenzile de răspuns activ
     pe stream-urile de comandă ale gazdelor afectate și expune un API de tip REST împreună cu o
     conexiune WebSocket pentru panoul de control.
 
-  \item \textbf{Containerul honeypot} (\textit{hp-shell}) este mecanismul de izolare și
+  \item Containerul honeypot (\textit{hp-shell}) este mecanismul de izolare și
     observare activat după decizia IPS-ului: primește sesiunile SSH pivotate, expune un mediu
     Linux aparent funcțional populat cu fișiere-capcană (\textit{canary files}), înregistrează
     integral activitatea atacatorului prin captură de terminal și raportează propriile evenimente
     de syscall înapoi la serverul central prin același mecanism de streaming.
 
-  \item \textbf{Panoul de control} (\textit{dashboard}) oferă operatorilor de securitate o
+  \item Panoul de control (\textit{dashboard}) oferă operatorilor de securitate o
     interfață web în timp real pentru monitorizarea agenților conectați, inspecția fluxului de
     evenimente procesate și declanșarea manuală a pivotărilor, complementând automatizarea cu
     posibilitatea de intervenție umană.
@@ -70,11 +70,48 @@ gazde monitorizate fără modificarea serverului: agentul nou publică pe un str
 serverul îl descoperă automat. Cuplajul slab dintre componente este asigurat de Redis Streams,
 care acționează ca magistrală de mesaje persistentă.
 
-Fluxul de date parcurge sistemul în patru faze:
+Fluxul de date parcurge sistemul în patru faze (Figura~\ref{fig:cap4-flux}):
 \textbf{Colectare} (agentul captează syscall-urile și le publică) →
 \textbf{Detecție} (serverul central atribuie scoruri evenimentelor și realizează agregarea acestora prin intermediul unei ferestre glisante) →
 \textbf{Decizie IPS} (pragul de anomalie este depășit) →
 \textbf{Răspuns activ} (pivotare în honeypot + blocare IP).
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      box/.style={
+        rectangle, rounded corners=3pt, draw, line width=0.4pt,
+        minimum width=3.1cm, minimum height=1.1cm, align=center,
+        inner sep=4pt},
+      agent/.style={box, fill=cap4agent},
+      bus/.style={box, fill=cap4bus},
+      server/.style={box, fill=cap4server},
+      hp/.style={box, fill=cap4hp},
+      flow/.style={-{Stealth[length=2.2mm]}, line width=0.5pt, gray!70!black},
+      lbl/.style={font=\scriptsize\itshape, text=black!65},
+    ]
+    \definecolor{cap4agent}{RGB}{225,245,238}
+    \definecolor{cap4bus}{RGB}{241,239,232}
+    \definecolor{cap4server}{RGB}{238,237,254}
+    \definecolor{cap4hp}{RGB}{250,236,231}
+
+    \node[agent]  (agent)  at (0,0)      {\textbf{Agent de colectare}\\[1pt]\scriptsize eBPF $\cdot$ Tracee};
+    \node[bus]    (redis)  at (4.6,0)    {\textbf{Redis Streams}\\[1pt]\scriptsize evenimente $\cdot$ comenzi};
+    \node[server] (server) at (9.2,0)    {\textbf{Server central}\\[1pt]\scriptsize Isolation Forest};
+    \node[hp]     (hp)     at (0,-2.6)   {\textbf{Honeypot}\\[1pt]\scriptsize container Docker};
+
+    \draw[flow] (agent.north east) -- node[lbl, above] {evenimente} (redis.north west);
+    \draw[flow] (redis.north east) -- (server.north west);
+    \draw[flow] (server.south west) -- node[lbl, below] {comenzi} (redis.south east);
+    \draw[flow] (redis.south west) -- (agent.south east);
+    \draw[flow] (agent.south) -- node[lbl, right] {redirectare sesiune SSH} (hp.north);
+  \end{tikzpicture}
+  \caption[Fluxul de date în KernelTrap]{Fluxul de date în KernelTrap. Cele patru componente comunică exclusiv prin Redis
+  Streams: agentul publică evenimente de syscall, serverul central le scorează și emite comenzi
+  de pivotare, iar agentul redirectează sesiunea SSH compromisă către containerul honeypot.}
+  \label{fig:cap4-flux}
+\end{figure}
 
 \section{Colectarea și preprocesarea evenimentelor la nivel de agent}
 
@@ -183,7 +220,7 @@ din KernelTrap în capitolele ulterioare.
 
 \subsection{Praguri și calibrare în producție}
 
-Isolation Forest returnează pentru fiecare eveniment un scor continuu prin
+Isolation Forest returnează pentru fiecare eveniment un scor continuu prin\linebreak
 \texttt{decision\_function}: valorile pozitive corespund comportamentului normal, cele negative
 corespund anomaliilor. KernelTrap calibrează praguri individuale per-(\texttt{hostname}, \texttt{userId})
 pe partiția de validare BETH: percentila 2\% definește pragul severity 1 (anomalie minoră,
@@ -332,6 +369,13 @@ tacticile și procedurile folosite, precum și țintele urmărite. Fișierele de
 păstrate pe un volum persistent, rămânând disponibile pentru analiză ulterioară chiar și
 după oprirea sau recrearea containerului.
 
+Spre deosebire de jurnalele clasice, care rețin doar comenzile executate,
+înregistrarea integrală a terminalului păstrează și ieșirile programelor, precum
+și editările interactive de fișiere, oferind o reconstituire fidelă a sesiunii
+așa cum a fost ea percepută de atacator. Această fidelitate este valoroasă mai
+ales atunci când atacatorul folosește editoare în mod text sau interpretoare
+interactive, ale căror acțiuni nu lasă urme în istoricul shell-ului.
+
 \subsection{Monitorizarea în container și feedback loop}
 
 Containerul honeypot rulează propriul mecanism de monitorizare a syscall-urilor produse în
@@ -345,6 +389,14 @@ Această buclă de feedback închide ciclul de observare al IPS-ului: KernelTrap
 comportamentul utilizatorilor atât înainte de pivotare, pe gazda reală, cât și după, în
 containerul honeypot, menținând o perspectivă continuă asupra sesiunii și posibilitatea de a
 detecta anomalii suplimentare chiar și în mediul de confinement.
+
+Faptul că evenimentele containerului folosesc exact același format ca cele ale
+agenților de pe gazdele reale înseamnă că serverul central nu are nevoie de o cale
+de tratare separată pentru sursa lor: aceleași etape de scoring și agregare se
+aplică uniform, indiferent dacă evenimentul provine de pe o gazdă protejată sau
+din interiorul honeypot-ului. Astfel, un atacator care continuă să execute comenzi
+de recon sau de escaladare după pivotare rămâne sub observație, iar comportamentul
+său din mediul de confinement poate fi comparat direct cu cel dinaintea pivotării.
 
 \section{Panoul de control în timp real}
 

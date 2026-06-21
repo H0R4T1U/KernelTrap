@@ -69,15 +69,15 @@ locală pentru a izola măsurătorile de variabilitatea WAN.
     \hline
     \textbf{Componentă} & \textbf{Configurație} \\
     \hline\hline
-    Gazda monitorizată       & TODO: <distribuție Linux, kernel, CPU, RAM>  \\
+    Gazda monitorizată       & Debian GNU/Linux 12 (bookworm), kernel 6.1.0-45-amd64, procesor virtual KVM (4 nuclee, 4 thread-uri), 4{,}1 GB RAM \\
     \hline
-    Serverul central         & TODO: <distribuție, RAM, CPU>                \\
+    Serverul central         & Debian GNU/Linux 12 (bookworm), kernel 6.1.0-45-amd64, AMD Ryzen 9 5950X (24 nuclee fizice / 24 thread-uri), 42 GB RAM \\
     \hline
     Container honeypot       & Docker (Ubuntu 22.04), capabilități \texttt{AUDIT\_WRITE}, \texttt{AUDIT\_CONTROL} \\
     \hline
-    Versiune Tracee          & \texttt{aquasec/tracee:latest} (TODO: <commit/tag>) \\
+    Versiune Tracee          & \texttt{aquasec/tracee:latest} (\texttt{cfbbfee972e6}) \\
     \hline
-    Versiune Python          & TODO: <3.x>                                   \\
+    Versiune Python          & 3.11.2                                        \\
     \hline
     Versiune Redis           & 7 (imagine oficială Docker)                   \\
     \hline
@@ -94,7 +94,8 @@ performanță introdus pe gazda monitorizată, în repaus și în regim de lucru
 
 Tabelul \ref{tab:cap6-perf} sintetizează metricile măsurate pe mediul descris
 mai sus, raportate la țintele nefuncționale enunțate în capitolul 5
-(tabelul \ref{tab:cap5-nfr}).
+(tabelul \ref{tab:cap5-nfr}); overhead-ul pe CPU al agentului, principala cerință
+nefuncțională, este ilustrat în Figura~\ref{fig:cap6-overhead}.
 
 \begin{table}[h]
   \centering
@@ -105,18 +106,50 @@ mai sus, raportate la țintele nefuncționale enunțate în capitolul 5
     \hline
     \textbf{Metrică} & \textbf{Valoare} & \textbf{Țintă} & \textbf{Verdict} \\
     \hline\hline
-    CPU agent (idle)                          & TODO: \texttt{<X\%>}  & < 2,5\% (NF1) & TODO \\
+    CPU agent (idle)                          & 0{,}3 \%  & < 2,5\% (NF1) & Atins \\
     \hline
-    CPU agent                                 & TODO: \texttt{<X\%>}  & < 2,5\% (NF1) & TODO \\
+    CPU agent (în utilizare)                  & 1{,}8 \%  & < 2,5\% (NF1) & Atins \\
     \hline
-    RAM agent                                 & TODO: \texttt{<X> MB} & ---           & ---  \\
+    RAM agent                                 & 10{,}3 MB & ---           & ---   \\
     \hline
-    RAM server central                        & TODO: \texttt{<X> MB} & ---           & ---  \\
+    RAM server central                        & 2{,}54 GB & ---           & ---   \\
     \hline
-    Throughput susținut server                & TODO: \texttt{<X> ev/s} & ---         & ---  \\
+    Throughput susținut server                & $\sim$ 6\,600 ev/s & ---  & ---   \\
     \hline
   \end{tabular}
 \end{table}
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[font=\small]
+    \definecolor{cap6bar}{RGB}{29,158,117}
+    \definecolor{cap6baredge}{RGB}{15,110,86}
+    \definecolor{cap6target}{RGB}{163,45,45}
+    % scară verticală: 1% -> 1.4cm
+    \draw[line width=0.5pt] (0,0) -- (0,4.6);
+    \draw[line width=0.5pt] (0,0) -- (7,0);
+    \foreach \v in {1,2,3} {
+      \draw[line width=0.3pt, gray!35, dashed] (0,\v*1.4) -- (7,\v*1.4);
+      \draw[line width=0.5pt] (-0.08,\v*1.4) -- (0,\v*1.4);
+      \node[left, font=\scriptsize] at (-0.1,\v*1.4) {\v\,\%};
+    }
+    \node[left, font=\scriptsize] at (-0.1,0) {0\,\%};
+    \node[anchor=west, font=\scriptsize] at (0.1,4.4) {overhead CPU (\%)};
+    % bare: idle 0,3% -> 0,42cm ; în utilizare 1,8% -> 2,52cm
+    \fill[cap6bar, draw=cap6baredge, line width=0.4pt] (1.3,0) rectangle (2.5,0.42);
+    \fill[cap6bar, draw=cap6baredge, line width=0.4pt] (4.0,0) rectangle (5.2,2.52);
+    \node[above, font=\scriptsize] at (1.9,0.42) {0,3\,\%};
+    \node[above, font=\scriptsize] at (4.6,2.52) {1,8\,\%};
+    \node[below, font=\scriptsize] at (1.9,0) {idle};
+    \node[below, font=\scriptsize] at (4.6,0) {în utilizare};
+    % linia țintă la 2,5% -> 3,5cm
+    \draw[cap6target, line width=0.8pt, dashed] (0,3.5) -- (7,3.5);
+    \node[above left, font=\scriptsize, text=cap6target] at (7,3.5) {țintă NF1: 2,5\,\%};
+  \end{tikzpicture}
+  \caption[Overhead-ul CPU al agentului de colectare]{Overhead-ul pe CPU al agentului de colectare în repaus (idle) și în utilizare,
+  raportat la ținta nefuncțională NF1 de sub 2,5\%. Ambele valori măsurate rămân sub prag.}
+  \label{fig:cap6-overhead}
+\end{figure}
 
 % ----------------------------------------------------------------
 \section{Scenarii de atac și răspunsul sistemului}
@@ -155,9 +188,19 @@ despre sistem, conturi, configurări de servicii și permisiuni.
   \end{tabular}
 \end{table}
 
-Rezultat: severitatea 2 apare pe majoritatea evenimentelor în primele
-secunde de execuție; fereastra glisantă atinge pragul dublu
-(cantitate $\geq$ 5 și rată $\geq$ 30\%) și emite comanda de pivotare.
+Rezultat: încă din primele secunde de execuție, severitatea 2 apare pe
+majoritatea evenimentelor generate de LinPEAS, întrucât rafalele dense de procese
+de recon combină simultan mai mulți indicatori anormali, anume unelte de rețea,
+citirea căilor sensibile și o rată ridicată de syscall-uri. Pe măsură ce scriptul
+rulează, fereastra glisantă asociată perechii (gazdă, utilizator) acumulează
+rapid evenimente de severitate 2, iar proporția acestora în totalul activității
+utilizatorului depășește pragul de 30\%, deoarece sesiunea nu conține activitate
+benignă semnificativă care să dilueze semnalul. În momentul în care ambele
+condiții ale pragului dublu sunt îndeplinite simultan, cel puțin 5 evenimente de
+severitate 2 și o rată de peste 30\%, serverul central emite comanda de pivotare.
+Întreaga secvență, de la lansarea LinPEAS până la redirecționarea sesiunii,
+devine vizibilă în panoul de control sub forma evenimentelor scor-uite și a
+intrării corespunzătoare în istoricul pivotărilor.
 
 \subsection{Scenariul 2: stabilirea unui canal C2 cu Sliver}
 
@@ -188,11 +231,17 @@ operatorul a emis remote comenzi standard de recon.
   \end{tabular}
 \end{table}
 
-Rezultat: combinația dintre processName cu frecvență zero, indicatorii de
-rețea și comenzile remote scor-uite ca recon împinge fereastra peste
-ambele praguri. Pivotarea automată redirecționează sesiunea SSH activă
-către containerul honeypot, iar regula \texttt{iptables} adăugată pe IP-ul
-C2 blochează stabilirea oricăror conexiuni noi de la același atacator.
+Rezultat: deși Sliver generează un volum de syscall-uri mai redus decât recon-ul
+zgomotos al LinPEAS, combinația de indicatori rămâne suficient de distinctivă.
+Numele de proces al implantului, absent din datele de antrenare BETH, primește o
+frecvență zero și contribuie la scoruri mari de anomalie; la acesta se adaugă
+conexiunea persistentă către serverul C2 și comenzile de recon executate la
+distanță de operator. Acumularea acestor evenimente de severitate 2 împinge
+fereastra glisantă peste ambele praguri, iar pivotarea automată redirecționează
+sesiunea SSH activă către containerul honeypot. În paralel, regula
+\texttt{iptables} adăugată pe adresa serverului C2 blochează stabilirea oricăror
+conexiuni noi de la același atacator, fără a întrerupe conexiunea deja existentă,
+care este preluată de honeypot pentru observare continuă.
 
 \subsection{Scenariul 3: acces la fișiere canary post-pivotare}
 
@@ -226,13 +275,18 @@ Pentru fiecare astfel de acces, regulile \texttt{auditd} instalate de
   \end{tabular}
 \end{table}
 
-Rezultat: spre deosebire de detecția probabilistică din scenariile
-precedente, accesul la fișiere canary constituie un indicator binar de
-compromitere, niciun utilizator legitim nu are motiv să deschidă aceste
-fișiere, întrucât conțin credențiale fictive plasate intenționat ca
-momeală. Indicatorii apar imediat în panoul de control și confirmă
-post-factum că pivotarea a fost justificată, oferind în plus telemetrie
-asupra credențialelor pe care atacatorul le urmărește.
+Rezultat: spre deosebire de detecția probabilistică din scenariile precedente, în
+care decizia se bazează pe acumularea de scoruri de anomalie, accesul la un fișier
+canary constituie un indicator binar de compromitere. Niciun utilizator legitim
+nu are motiv să deschidă aceste fișiere, întrucât ele conțin credențiale fictive
+plasate intenționat ca momeală, astfel încât o singură tentativă de citire este
+suficientă pentru a confirma intenția ostilă. Indicatorii apar imediat în panoul
+de control, în același flux în care sunt afișate și celelalte evenimente, și
+confirmă post-factum că pivotarea a fost justificată. În plus, faptul că
+atacatorul a fost atras către aceste fișiere oferă telemetrie asupra tipurilor de
+credențiale pe care le urmărește, anume chei cloud, chei SSH și token-uri de
+CI/CD, informație utilă pentru evaluarea ulterioară a riscului și pentru
+anticiparea pașilor următori ai unei campanii reale.
 
 % ----------------------------------------------------------------
 \section{Limitări}

@@ -108,7 +108,7 @@ declanșa trap-ul de pivotare din shell-ul atacatorului) și regulile
 \begin{figure}[!htb]
   \centering
   \includegraphics[width=\textwidth]{figuri/cap5-arch.pdf}
-  \caption{Arhitectura de componente. Cele trei zone comunică
+  \caption[Arhitectura de componente]{Arhitectura de componente. Cele trei zone comunică
            exclusiv prin Redis Streams; serverul central agregă fluxurile,
            atribuie scoruri și emite comenzi de pivotare.}
   \label{fig:cap5-arch}
@@ -147,7 +147,7 @@ pivotarea.
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.85\textwidth]{figuri/cap5-scores.pdf}
-  \caption{Distribuția ilustrativă a scorurilor de normalitate produse de
+  \caption[Distribuția scorurilor Isolation Forest]{Distribuția ilustrativă a scorurilor de normalitate produse de
            IsolationForest, cu pragurile de severitate 1 și 2 marcate.}
   \label{fig:cap5-scores}
 \end{figure}
@@ -166,7 +166,7 @@ REST și un canal WebSocket asincron pe aceeași conexiune; biblioteca
 scikit-learn pune la dispoziție o implementare matură și bine optimizată
 a algoritmului Isolation Forest; Tracee permite instrumentarea kernelului
 prin eBPF fără să fie nevoie de recompilarea pe fiecare versiune de kernel
-țintă,iar Redis Streams oferă o magistrală de mesaje persistentă, suficient de
+țintă, iar Redis Streams oferă o magistrală de mesaje persistentă, suficient de
 robustă pentru cazurile de utilizare ale sistemului, fără a impune
 complexitatea operațională a unui sistem dedicat de mesagerie de tip Kafka
 sau RabbitMQ.

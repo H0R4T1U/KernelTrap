@@ -227,7 +227,7 @@ Sondajul publicat în \textit{Computers \& Security}~\cite{deceptionsurvey2024}
 (2024) sintetizează cele mai recente tehnici de înșelăciune cibernetică,
 incluzând redirecționarea, mutarea țintelor (MTD) și deceptia bazată pe AI.
 Lucrarea identifică redirecționarea reactivă ca pe o direcție emergentă cu
-puține implementări academice complete o observație care confirmă noutatea
+puține implementări academice complete, o observație care confirmă noutatea
 contribuției KernelTrap.
 Kahlhofer și Rass~\cite{kahlhofer2024applayer} demonstrează la EuroS\&PW 2024
 fezabilitatea unei deceptii la nivel aplicativ fără modificarea aplicațiilor
@@ -235,7 +235,7 @@ protejate, principiu reflectat în KernelTrap prin faptul că redirecționarea
 atacatorului nu necesită modificări ale daemon-ului SSH sau ale aplicațiilor
 existente pe gazda compromisă.
 
-În plus, conceptul de \textbf{honeytoken}în implementarea KernelTrap sub
+În plus, conceptul de \textbf{honeytoken} în implementarea KernelTrap sub
 forma fișierelor canary plasate în containerul honeypot este susținut de
 lucrarea seminală a lui Bourke și Grzelak~\cite{bourke2018awstokens} (Black Hat
 Asia 2018), care demonstrează empiric o rată de declanșare de 83\% a
@@ -288,9 +288,9 @@ lucrări academice solide: monitorizarea prin eBPF/Tracee este validată
 de~\cite{soldani2023ebpf,hao2024ebpfruntime,syairozi2025ebpfcomparative,fournier2021ebpf},
 detectarea anomaliilor prin Isolation Forest pe BETH este susținută
 de~\cite{highnam2021beth,liu2008iforest,atawneh2025symmetry,eremin2025streams},
-honeypot-ul cu interacțiune ridicată Cowrie-style este analizat
+honeypot-ul cu interacțiune ridicată în stilul Cowrie este analizat
 de~\cite{qcowrie2026,sladic2024llm,honeypotsurvey2025},
-iar pivotarea reactivă este pionierată de Lopez
+iar pivotarea reactivă a fost introdusă de Lopez
 et al.~\cite{lopez2024tcpredirection}.
 Pe de altă parte, niciuna dintre lucrările examinate nu integrează aceste patru
 componente într-un sistem unitar.
