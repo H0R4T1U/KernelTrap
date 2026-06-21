@@ -10,15 +10,16 @@ RUN apt-get update && \
 # SSH daemon run dir
 RUN mkdir -p /run/sshd /var/run/sshd
 
-# decoy user inside the container.
-# The .sudo_as_admin_successful markers (in /etc/skel, copied by `useradd -m`,
-# and in the attacker template home) suppress the Ubuntu "sudo_root" login
-# banner for every provisioned user. provision-user.sh also touches it.
+# decoy user inside the container
 RUN useradd -ms /bin/bash attacker && \
     echo 'attacker:Password123!' | chpasswd && \
-    usermod -aG sudo attacker && \
-    touch /etc/skel/.sudo_as_admin_successful /home/attacker/.sudo_as_admin_successful && \
-    chown attacker:attacker /home/attacker/.sudo_as_admin_successful
+    usermod -aG sudo attacker
+
+# Strip the Ubuntu "sudo_root" login hint at the SOURCE so a pivoted session lands
+# on a bare prompt — no banner, no per-user marker file, as if nothing changed.
+# ubuntu:22.04 ships this block in /etc/bash.bashrc (gated on
+# ~/.sudo_as_admin_successful); delete it from "# sudo hint" to its closing fi.
+RUN sed -i '/^# sudo hint/,/^fi$/d' /etc/bash.bashrc
 
 # simple fake dirs
 RUN mkdir -p /opt/app /var/www/html /data && \

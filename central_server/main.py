@@ -114,6 +114,8 @@ _stream_cursors: Dict[str, str] = {}
 _pivot_history: Deque[Dict[str, Any]] = deque(maxlen=10_000)
 _ws_clients: Set[WebSocket] = set()
 _log_broadcast_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+# Max events coalesced into a single WebSocket message by the broadcaster.
+_WS_BATCH_MAX = 1000
 # hostname -> deque of event timestamps (last 60 s) for events/min calculation
 _host_event_times: Dict[str, deque] = {}
 
@@ -371,10 +373,20 @@ async def _pivot_publisher_loop():
 async def _ws_broadcaster_loop():
     while True:
         try:
-            event = await _log_broadcast_queue.get()
+            # Block for the first event, then drain everything else already
+            # queued and ship it as ONE batch. One WS message per burst (not per
+            # event) keeps the live feed in lock-step with the server instead of
+            # falling behind a growing per-event backlog under a flood (linpeas).
+            first = await _log_broadcast_queue.get()
+            batch = [first]
+            while len(batch) < _WS_BATCH_MAX:
+                try:
+                    batch.append(_log_broadcast_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
             if not _ws_clients:
-                continue
-            msg = json.dumps(event)
+                continue  # drained anyway, so the queue can't grow unwatched
+            msg = json.dumps(batch)
             dead: Set[WebSocket] = set()
             for ws in list(_ws_clients):
                 try:

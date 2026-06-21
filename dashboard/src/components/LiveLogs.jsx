@@ -20,12 +20,16 @@ export default function LiveLogs() {
   const [autoScroll, setAutoScroll] = useState(true);
   const seqRef = useRef(0);
 
-  useWebSocket(WS, (event) => {
-    // Tag each event with a monotonic id so React keys stay stable as the list
-    // is appended-to and sliced (array index would reuse the wrong rows).
-    const tagged = { ...event, _seq: seqRef.current++ };
+  useWebSocket(WS, (payload) => {
+    // The server coalesces a burst into ONE array message (keeps the feed in
+    // lock-step under a flood); tolerate a lone object too for safety. Tag each
+    // event with a monotonic id so React keys stay stable as the list is
+    // appended-to and sliced, and append the whole batch in ONE state update.
+    const incoming = Array.isArray(payload) ? payload : [payload];
+    if (incoming.length === 0) return;
     setEvents((prev) => {
-      const next = [...prev, tagged];
+      const tagged = incoming.map((ev) => ({ ...ev, _seq: seqRef.current++ }));
+      const next = [...prev, ...tagged];
       return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
     });
   });
