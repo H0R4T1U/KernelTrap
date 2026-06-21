@@ -60,17 +60,50 @@ else
 fi
 
 # -------- Tracee (image tag + digest scurt) -----------------------------------
+# Încercăm în ordine:
+#   1. container Tracee care RULEAZĂ (cel mai precis)
+#   2. orice imagine cu "tracee" în nume (descărcată dar oprită)
+#   3. binar tracee instalat pe gazdă (rar, dar posibil)
+TRACEE="necunoscut — completează manual din comanda care pornește Tracee"
+
+# Auto-detect dacă docker are nevoie de sudo
+DOCKER_CMD=""
 if command -v docker >/dev/null 2>&1; then
-  TRACEE_LINE=$(docker images aquasec/tracee --format '{{.Tag}}\t{{.ID}}' 2>/dev/null | head -1)
-  if [[ -n "$TRACEE_LINE" ]]; then
-    TRACEE_TAG=$(printf '%s' "$TRACEE_LINE" | cut -f1)
-    TRACEE_ID=$(printf '%s' "$TRACEE_LINE" | cut -f2)
-    TRACEE="aquasec/tracee:${TRACEE_TAG} (${TRACEE_ID})"
+  if docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="docker"
+  elif sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -n docker"
+    echo "(folosesc sudo pentru docker — userul nu e în grupul docker)" >&2
   else
-    TRACEE="aquasec/tracee — imaginea nu e descărcată local"
+    echo "(docker accesibil doar prin sudo cu parolă; ori rulează:" >&2
+    echo "    sudo ./bench/env_collect.sh" >&2
+    echo " ori adaugă userul în grupul docker: sudo usermod -aG docker \$USER && logout)" >&2
   fi
-else
-  TRACEE="docker indisponibil"
+fi
+
+if [[ -n "$DOCKER_CMD" ]]; then
+  # 1. Container care rulează
+  RUNNING=$($DOCKER_CMD ps --filter 'ancestor=aquasec/tracee' --format '{{.Image}}' 2>/dev/null | head -1)
+  if [[ -z "$RUNNING" ]]; then
+    RUNNING=$($DOCKER_CMD ps --format '{{.Image}}\t{{.Names}}' 2>/dev/null | grep -i 'tracee' | head -1 | cut -f1)
+  fi
+  if [[ -n "$RUNNING" ]]; then
+    DIGEST=$($DOCKER_CMD inspect --format='{{.Image}}' "$RUNNING" 2>/dev/null | cut -c1-19)
+    [[ -z "$DIGEST" ]] && DIGEST=$($DOCKER_CMD images "$RUNNING" --format '{{.ID}}' 2>/dev/null | head -1)
+    TRACEE="${RUNNING} (${DIGEST})"
+  else
+    # 2. Imagine descărcată dar nu rulează
+    IMG=$($DOCKER_CMD images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}' 2>/dev/null | grep -i 'tracee' | head -1)
+    if [[ -n "$IMG" ]]; then
+      TRACEE_REPO=$(printf '%s' "$IMG" | cut -f1)
+      TRACEE_ID=$(printf '%s' "$IMG" | cut -f2)
+      TRACEE="${TRACEE_REPO} (${TRACEE_ID}) — imaginea nu rulează acum"
+    fi
+  fi
+fi
+# 3. Binar nativ ca fallback
+if [[ "$TRACEE" == necunoscut* ]] && command -v tracee >/dev/null 2>&1; then
+  TRACEE="tracee binar nativ: $(tracee --version 2>/dev/null | head -1)"
 fi
 
 # -------- Python --------------------------------------------------------------

@@ -102,10 +102,13 @@ mkdir -p logs
 : "${PIVOT_THRESHOLD:=5}"            # severity-2 events floor in 60s window
 : "${MIN_SEV2_RATE:=0.30}"           # rate gate: ≥30% of events in window must be sev-2
 # raw-score cutoff for severity 2 (live-tuned, not BETH). LESS negative = MORE
-# sensitive. -0.05 was far too loose: it flagged ordinary bash/ssh/sudo/sshd
-# activity as HIGH and flooded the board. The ns->s timestamp fix already
-# restored the burst features that flag recon, so keep the calibrated -0.15.
-: "${OVERRIDE_HIGH_THRESHOLD:=-0.15}"
+# sensitive. Middle ground: -0.05 was too loose (flooded the board with FPs on
+# ordinary bash/ssh/sudo/sshd), -0.15 was too strict (loud recon like linpeas
+# dilutes its sev-2 fraction below MIN_SEV2_RATE, so the pivot never fired).
+# -0.10 sits between them and is close to the model's own calibrated high cutoff
+# (meta.json global_thresholds.high = -0.0847, the 0.2 percentile). sshd/sudo/su
+# stay capped at sev-1 (INFRA_SOFT_BENIGN), so a looser cutoff can't reflood them.
+: "${OVERRIDE_HIGH_THRESHOLD:=-0.10}"
 
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
   WHITELIST_UIDS="$WHITELIST_UIDS" \
