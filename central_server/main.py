@@ -14,7 +14,9 @@ Environment variables:
     REDIS_HOST          Redis host (default: localhost)
     REDIS_PORT          Redis port (default: 6379)
     MODEL_DIR           Path to trained IF model dir
-    PIVOT_THRESHOLD     Severity-2 events in window to trigger pivot (default: 5)
+    PIVOT_THRESHOLD     VOLUME branch: sev-2 count in window to trigger pivot (default: 10)
+    CONC_MIN_COUNT      CONCENTRATION branch: min sev-2 count, paired with MIN_SEV2_RATE (default: 5)
+    MIN_SEV2_RATE       CONCENTRATION branch: sev-2 fraction of window events (default: 0.30)
     PIVOT_WINDOW_SEC    Sliding window in seconds (default: 60)
     WHITELIST_UIDS      Extra comma-separated UIDs to never pivot (beyond built-in daemon list)
     HOST_DISCOVERY_SEC  How often to scan Redis for new agent streams (default: 30)
@@ -49,12 +51,17 @@ from central_server.window_v3 import SlidingWindowTracker
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 MODEL_DIR = os.getenv("MODEL_DIR", "masina_invata/isolation_forest/beth_iforest_model_host2tier")
-PIVOT_THRESHOLD = int(os.getenv("PIVOT_THRESHOLD", "5"))
+# VOLUME branch: pivot when the sev-2 count in the window reaches this floor,
+# regardless of concentration — catches loud recon (linpeas) diluted to ~0% rate.
+PIVOT_THRESHOLD = int(os.getenv("PIVOT_THRESHOLD", "10"))
 PIVOT_WINDOW_SEC = int(os.getenv("PIVOT_WINDOW_SEC", "60"))
-# Rate gate: of all events the user generates in the window, what fraction
-# must be severity-2 to trigger a pivot? Default 0.30 = 30%. Distinguishes a
-# user who's busy doing real work from a user actually attacking. Lower
-# (e.g. 0.10) = more sensitive; higher (0.50) = more conservative.
+# CONCENTRATION branch: pivot when a smaller sev-2 count (>= CONC_MIN_COUNT) is
+# also >= MIN_SEV2_RATE of all the user's events — catches stealthy attackers.
+# CONC_MIN_COUNT stops a lone high-severity event (1/1=100%) pivoting a quiet
+# user. The two branches are ORed in SlidingWindowTracker.feed().
+CONC_MIN_COUNT = int(os.getenv("CONC_MIN_COUNT", "5"))
+# Concentration rate gate: what fraction of the window's events must be
+# severity-2. 0.30 = 30%. Lower = more sensitive; higher = more conservative.
 MIN_SEV2_RATE = float(os.getenv("MIN_SEV2_RATE", "0.30"))
 # UIDs that are always ignored — pure system daemons with no interactive session.
 # Service accounts that are attacker targets (www-data=33, apache=48, mysql=27,
@@ -151,6 +158,7 @@ async def startup():
         pivot_threshold=PIVOT_THRESHOLD,
         window_seconds=PIVOT_WINDOW_SEC,
         min_sev2_rate=MIN_SEV2_RATE,
+        conc_min_count=CONC_MIN_COUNT,
         whitelist_uids=WHITELIST_UIDS,
     )
 

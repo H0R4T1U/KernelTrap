@@ -1,24 +1,32 @@
 """
 Sliding window anomaly tracker per (hostname, userId).
 
-Triggers a pivot when, in a rolling ``window_seconds`` window, BOTH:
+Triggers a pivot when, in a rolling ``window_seconds`` window, EITHER
+detector fires (OR) — the two catch different attack shapes:
 
-  * the absolute count of severity-2 events crosses ``pivot_threshold``
-    (a floor — at least N high-severity events seen recently)
-  * those severity-2 events make up at least ``min_sev2_rate`` of all
-    events the user generated in the window (a rate gate — proves the
-    high-severity activity stands out from the user's baseline)
+  * VOLUME: the count of severity-2 events reaches ``pivot_threshold``,
+    regardless of concentration. Catches a loud scanner (e.g. linpeas)
+    that floods the window with benign syscalls so its sev-2 *fraction*
+    is tiny (~0%) yet its absolute sev-2 count is high.
+  * CONCENTRATION: a smaller count (``conc_min_count``) that is also at
+    least ``min_sev2_rate`` of all the user's events. Catches a stealthy
+    attacker whose few actions are mostly anomalous. The ``conc_min_count``
+    floor stops a single high-severity event (1/1 = 100%) from pivoting
+    a quiet user.
 
-The rate gate is the important addition vs. the original (count-only) tracker:
-on a busy system, 5 sev-2 events out of 5000 total is ~0.1% and is just
-distribution shift; 5 sev-2 out of 10 is 50% and is genuinely suspicious.
-The count floor protects against tiny-window false positives where 2/3
-events are sev-2 but the user has barely done anything.
+Why OR (not AND): requiring BOTH (the old design) is the intersection of the
+two shapes — too narrow, so a loud-but-diluted scanner like linpeas, whose
+concentration is ~0%, slips through despite a high sev-2 count. OR is the
+union: voluminous OR concentrated. The price is that the VOLUME branch is
+count-only, so a genuinely very busy benign user who accumulates
+``pivot_threshold`` sev-2 events can pivot — bounded by keeping the volume
+floor high and the severity-2 score cutoff strict.
 
 Tunables (all env-var overridable in main.py — defaults shown):
-  PIVOT_THRESHOLD    = 5     # absolute floor on sev-2 count
+  PIVOT_THRESHOLD    = 10    # VOLUME floor on sev-2 count
+  CONC_MIN_COUNT     = 5     # CONCENTRATION-branch floor on sev-2 count
+  MIN_SEV2_RATE      = 0.30  # CONCENTRATION-branch rate: 30% of events must be sev-2
   PIVOT_WINDOW_SEC   = 60
-  MIN_SEV2_RATE      = 0.30  # 30% of events in window must be sev-2
 """
 
 from __future__ import annotations
@@ -48,16 +56,18 @@ class SlidingWindowTracker:
 
     def __init__(
         self,
-        pivot_threshold: int = 5,
+        pivot_threshold: int = 10,
         window_seconds: int = 60,
         min_severity: int = 2,
         min_sev2_rate: float = 0.30,
+        conc_min_count: int = 5,
         whitelist_uids: Optional[Set[int]] = None,
     ):
-        self._threshold = pivot_threshold
+        self._threshold = pivot_threshold          # VOLUME branch floor on sev-2 count
         self._window = window_seconds
         self._min_severity = min_severity
-        self._min_sev2_rate = min_sev2_rate
+        self._min_sev2_rate = min_sev2_rate        # CONCENTRATION branch rate threshold
+        self._conc_min_count = conc_min_count      # CONCENTRATION branch floor on sev-2 count
         self._whitelist_uids: Set[int] = whitelist_uids or set()
 
         self._windows: Dict[Tuple[str, int], UserWindow] = {}
@@ -104,20 +114,26 @@ class SlidingWindowTracker:
             self._prune(now)
             self._last_prune = now
 
-        # Trigger: both gates must pass — absolute floor AND concentration rate.
+        # Trigger: pivot if EITHER detector fires (OR).
         sev2_count = sum(1 for _, s in win.events if s >= self._min_severity)
-        if sev2_count < self._threshold:
-            return  # absolute floor not reached yet
-
         total = len(win.events)
         if total == 0:
-            return  # impossible if sev2_count >= 1, but defensive
-        rate = sev2_count / total
-        if rate < self._min_sev2_rate:
-            return  # high-severity activity not concentrated enough
+            return  # defensive; impossible once an event was appended
 
-        self._fire_pivot(win, hostname, user_id,
-                         f"rate+threshold (sev2={sev2_count}/{total}={rate:.0%})")
+        # VOLUME detector: a sustained burst of sev-2, regardless of how diluted
+        # — catches loud recon (e.g. linpeas) whose sev-2 fraction is ~0%.
+        if sev2_count >= self._threshold:
+            self._fire_pivot(win, hostname, user_id,
+                             f"volume (sev2={sev2_count}>={self._threshold})")
+            return
+
+        # CONCENTRATION detector: fewer sev-2 events, but a large fraction of all
+        # activity — catches a stealthy attacker. The count floor prevents a lone
+        # high-severity event (1/1 = 100%) from pivoting a quiet user.
+        rate = sev2_count / total
+        if sev2_count >= self._conc_min_count and rate >= self._min_sev2_rate:
+            self._fire_pivot(win, hostname, user_id,
+                             f"concentration (sev2={sev2_count}/{total}={rate:.0%})")
 
     def _fire_pivot(self, win: "UserWindow", hostname: str, user_id: int, trigger: str):
         win.pivoted = True
@@ -163,7 +179,8 @@ class SlidingWindowTracker:
                     "severity2_count": sev2,
                     "total_count": total,
                     "severity2_rate": rate,
-                    "severity2_threshold": self._threshold,
+                    "severity2_threshold": self._threshold,    # VOLUME branch floor
+                    "conc_min_count": self._conc_min_count,     # CONCENTRATION branch floor
                     "min_severity2_rate": self._min_sev2_rate,
                 },
             })
@@ -175,6 +192,7 @@ class SlidingWindowTracker:
             "pivoted": sum(1 for w in self._windows.values() if w.pivoted),
             "pending_pivots": len(self._pending_pivots),
             "pivot_threshold": self._threshold,
+            "conc_min_count": self._conc_min_count,
             "window_seconds": self._window,
             "min_sev2_rate": self._min_sev2_rate,
         }

@@ -99,14 +99,16 @@ mkdir -p logs
 # Extra UIDs to never pivot beyond the built-in system daemon blocklist.
 # Service accounts (www-data=33, apache=48, mysql=27, etc.) are tracked by default.
 : "${WHITELIST_UIDS:=}"
-# severity-2 events floor in 60s window — raised from 5: VOLUME is what separates
-# loud recon (linpeas = a sustained flood of sev-2) from a quiet ls/whoami session
-# (a handful). Calibrate against /users on a real run. The count floor is the
-# false-positive guard now that the rate gate below is loose.
+# Pivot fires if EITHER detector trips (OR), see window_v3.py:
+#  VOLUME branch — sev-2 count in the 60s window reaches PIVOT_THRESHOLD,
+#  regardless of concentration. This is what catches loud recon (linpeas =
+#  a sustained flood of sev-2) whose sev-2 fraction is diluted to ~0%.
 : "${PIVOT_THRESHOLD:=10}"
-# rate gate: ≥this fraction of events in the window must be sev-2 — lowered from
-# 0.30 so linpeas's diluted concentration (lots of benign syscalls) still passes.
-: "${MIN_SEV2_RATE:=0.10}"
+#  CONCENTRATION branch — a smaller sev-2 count (>= CONC_MIN_COUNT) that is
+#  also >= MIN_SEV2_RATE of all the user's events. Catches stealthy attackers;
+#  CONC_MIN_COUNT stops a lone HIGH event (1/1=100%) pivoting a quiet user.
+: "${CONC_MIN_COUNT:=5}"
+: "${MIN_SEV2_RATE:=0.30}"      # concentration-branch rate (30%)
 # raw-score cutoff for severity 2 (live-tuned, not BETH). LESS negative = MORE
 # sensitive. Kept STRICT at -0.15: the model is BETH-trained and scores ordinary
 # interactive commands (whoami/ls/bash have processName_freq=0) in the SAME band
@@ -118,6 +120,7 @@ mkdir -p logs
 MODEL_DIR="$MODEL_DIR" REDIS_HOST=localhost REDIS_PORT="$REDIS_PORT" \
   WHITELIST_UIDS="$WHITELIST_UIDS" \
   PIVOT_THRESHOLD="$PIVOT_THRESHOLD" \
+  CONC_MIN_COUNT="$CONC_MIN_COUNT" \
   MIN_SEV2_RATE="$MIN_SEV2_RATE" \
   OVERRIDE_HIGH_THRESHOLD="$OVERRIDE_HIGH_THRESHOLD" \
   nohup uvicorn central_server.main:app --host 0.0.0.0 --port 8000 \

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { fetchUsers, triggerPivot } from "../api";
 
-// Pivot trigger requires BOTH gates to pass:
-//   - count >= severity2_threshold (absolute floor)
-//   - severity2_rate >= min_severity2_rate (rate gate vs total events)
+// Pivot fires if EITHER detector trips (OR), matching window_v3.py:
+//   - VOLUME:        count >= severity2_threshold (sev-2 flood, any concentration)
+//   - CONCENTRATION: count >= conc_min_count AND severity2_rate >= min_severity2_rate
 
 function CountGauge({ count, threshold }) {
   const pct = Math.min((count / threshold) * 100, 100);
@@ -86,7 +86,7 @@ export default function UsersTable() {
               <tr>
                 <th>Host</th>
                 <th>UID</th>
-                <th>Anomaly pressure (60 s window — both gates required)</th>
+                <th>Anomaly pressure (60 s window — volume OR concentration)</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -96,15 +96,16 @@ export default function UsersTable() {
                 const count = w.severity2_count ?? 0;
                 const total = w.total_count ?? 0;
                 const rate = w.severity2_rate ?? 0;
-                const threshold = w.severity2_threshold ?? 1;
+                const threshold = w.severity2_threshold ?? 1;   // VOLUME floor
+                const concMinCount = w.conc_min_count ?? 5;     // CONCENTRATION floor
                 const minRate = w.min_severity2_rate ?? 0.30;
-                const countOk = count >= threshold;
-                const rateOk = rate >= minRate;
-                const bothGates = countOk && rateOk;
+                const volumeOk = count >= threshold;
+                const concOk = count >= concMinCount && rate >= minRate;
+                const armed = volumeOk || concOk;
                 return (
                   <tr
                     key={`${u.hostname}-${u.user_id}`}
-                    className={u.pivoted ? "row-pivoted" : (bothGates ? "row-armed" : "")}
+                    className={u.pivoted ? "row-pivoted" : (armed ? "row-armed" : "")}
                   >
                     <td>{u.hostname}</td>
                     <td>{u.user_id}</td>
