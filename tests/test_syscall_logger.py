@@ -92,6 +92,23 @@ def test_redis_backchannel_keeps_unrelated_remote_connect():
     assert lg._is_redis_backchannel(ev) is False
 
 
+def test_redis_backchannel_drops_loopback_when_agent_uses_lan_ip():
+    # All-in-one box: agent started with the LAN IP, but the server's uvicorn
+    # connects to 127.0.0.1:6379 — the connect args show loopback, not the LAN IP.
+    lg = _logger_forwarding()
+    lg._redis_port = 6379
+    lg._redis_addrs = {"10.0.0.5"}
+    ev = _event(
+        userId=0, processName="python3",
+        eventId=SYSCALL_TO_ID["security_socket_connect"],
+        eventName="security_socket_connect",
+        args=json.dumps([{"name": "remote_addr",
+                          "value": "{'sa_family': 'AF_INET', 'sin_port': '6379', 'sin_addr': '127.0.0.1'}"}]),
+        argsNum=1,
+    )
+    assert lg._is_redis_backchannel(ev) is True
+
+
 def test_redis_backchannel_ignores_non_connect_events():
     lg = _logger_forwarding()
     lg._redis_port = 6379

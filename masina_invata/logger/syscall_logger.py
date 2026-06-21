@@ -233,6 +233,18 @@ class TraceeParser:
                 timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
             except ValueError:
                 timestamp = time.time()
+        # Tracee emits the timestamp in NANOSECONDS since the epoch, but the BETH
+        # event schema — and the model's rolling-time features and the dashboard
+        # clock — expect fractional SECONDS. Scale large values down so a connect
+        # at ~1.7e18 ns doesn't become an "Invalid Date" or collapse the 5s
+        # rolling window to zero width. (1e14 s is year ~5,000,000, so any value
+        # above it cannot be seconds and must be ns.)
+        try:
+            timestamp = float(timestamp)
+        except (TypeError, ValueError):
+            timestamp = time.time()
+        if timestamp > 1e14:
+            timestamp /= 1e9
 
         context = data.get("context", data.get("processContext", {}))
         if isinstance(context, dict):
@@ -720,14 +732,15 @@ class SyscallLogger:
         # Destination port must appear as a standalone number in the args.
         if not re.search(rf"\b{self._redis_port}\b", args):
             return False
-        # If we resolved concrete addresses, require one of them too, so an
-        # unrelated connect that merely uses port 6379 to some other host is
-        # still forwarded. Fall back to port-only when no address is present.
+        # ...to a Redis address. Either a configured/resolved address, OR a
+        # loopback address — on an all-in-one box the central server's uvicorn
+        # connects to 127.0.0.1:6379 even when this agent was started with the
+        # box's LAN IP, so its connect args show loopback, not our LAN addr.
         if any(addr in args for addr in self._redis_addrs):
             return True
-        # Loopback connects (all-in-one box) rarely echo the literal IP in the
-        # arg struct; treat a port match as sufficient there.
-        return any(a in ("localhost", "127.0.0.1", "::1") for a in self._redis_addrs)
+        if re.search(r"\b127\.0\.0\.1\b|::1|\blocalhost\b", args):
+            return True
+        return False
 
     def _print_stats(self):
         print(f"[STATS] Events forwarded to central server: {self._event_count}", file=sys.stderr)
