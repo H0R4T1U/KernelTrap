@@ -464,6 +464,15 @@ async def manual_pivot(hostname: str, user_id: int):
     if hostname not in _stream_cursors:
         return JSONResponse({"error": f"Unknown host: {hostname}"}, status_code=404)
 
+    # Idempotent: if the user is already pivoted (auto-fired earlier or a previous
+    # manual click), atomically refuse to re-send — prevents manual-pivot spam from
+    # dispatching the command N times for a user who is already in the honeypot.
+    if _tracker is not None and not _tracker.mark_pivoted(hostname, user_id):
+        return JSONResponse(
+            {"status": "already_pivoted", "hostname": hostname, "user_id": user_id},
+            status_code=409,
+        )
+
     username_hint = _uid_to_username_hint(user_id)
     command_key = f"commands.{hostname}"
     cmd = json.dumps({"action": "pivot", "uid": user_id, "user": username_hint})

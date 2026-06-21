@@ -143,6 +143,25 @@ class SlidingWindowTracker:
         # window entry so user_states() can still report the pivoted state.
         win.events.clear()
 
+    def mark_pivoted(self, hostname: str, user_id: int) -> bool:
+        """Idempotently mark a user pivoted (used by the manual /pivot endpoint).
+
+        Returns True if THIS call performed the transition (caller should send the
+        pivot command), False if the user was ALREADY pivoted (caller should skip).
+        The atomic check-and-set here is what stops manual-pivot spam from
+        re-sending the command N times for an already-pivoted user.
+        """
+        key = (hostname, user_id)
+        win = self._windows.get(key)
+        if win is None:
+            win = UserWindow(hostname=hostname, user_id=user_id)
+            self._windows[key] = win
+        if win.pivoted:
+            return False
+        win.pivoted = True
+        win.events.clear()
+        return True
+
     def _prune(self, now: float):
         """Evict stale events and drop empty, non-pivoted windows."""
         cutoff = now - self._window
