@@ -97,24 +97,36 @@ def main() -> None:
 
             if "type=SYSCALL" in raw_line:
                 f = parse_audit_line(raw_line)
-                syscall_nr   = f.get("syscall", "")
-                syscall_name = SYSCALL_MAP.get(syscall_nr, f"syscall_{syscall_nr}")
-                event = {
-                    "timestamp":       extract_timestamp(f.get("msg", "")),
-                    "processId":       int(f.get("pid",  0)),
-                    "parentProcessId": int(f.get("ppid", 0)),
-                    "userId":          int(f.get("uid",  -1)),
-                    "mountNamespace":  0,
-                    "eventId":         int(syscall_nr) if syscall_nr.isdigit() else 0,
-                    "eventName":       syscall_name,
-                    "argsNum":         0,
-                    "returnValue":     int(f.get("exit", 0)),
-                    "hostName":        HOSTNAME,
-                    "sus":             0,
-                    "evil":            0,
-                    "args":            [],
-                }
-                batch.append(event)
+                try:
+                    uid = int(f.get("uid", -1))
+                except (TypeError, ValueError):
+                    uid = -1
+                # Forward ONLY interactive attacker activity (uid >= 1000). The
+                # central server consumes this stream directly (no SSH-uid filter),
+                # so without this gate uid:0 container-runtime init (runc/containerd/
+                # dockerd) and daemon noise flood the pipeline. Exclude nobody/unset.
+                if 1000 <= uid < 65534:
+                    syscall_nr   = f.get("syscall", "")
+                    syscall_name = SYSCALL_MAP.get(syscall_nr, f"syscall_{syscall_nr}")
+                    event = {
+                        "timestamp":       extract_timestamp(f.get("msg", "")),
+                        "processId":       int(f.get("pid",  0)),
+                        "parentProcessId": int(f.get("ppid", 0)),
+                        "userId":          uid,
+                        "mountNamespace":  0,
+                        "eventId":         int(syscall_nr) if syscall_nr.isdigit() else 0,
+                        "eventName":       syscall_name,
+                        # comm= is quoted in the audit line; strip so the scorer's
+                        # processName features / INFRA caps work on honeypot events.
+                        "processName":     f.get("comm", "").strip('"'),
+                        "argsNum":         0,
+                        "returnValue":     int(f.get("exit", 0)),
+                        "hostName":        HOSTNAME,
+                        "sus":             0,
+                        "evil":            0,
+                        "args":            [],
+                    }
+                    batch.append(event)
 
         # Flush when batch is full or flush interval has elapsed
         if batch and (len(batch) >= BATCH_SIZE or now - last_flush >= FLUSH_INTERVAL):

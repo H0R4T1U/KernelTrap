@@ -114,8 +114,9 @@ INFRA_BENIGN = frozenset({
     "NetworkManager", "wpa_supplicant", "avahi-daemon", "dhclient",
     # secret agents
     "ssh-agent", "gpg-agent", "polkitd",
-    # docker host
-    "containerd", "containerd-shim", "dockerd",
+    # docker host + container runtime
+    "containerd", "containerd-shim", "containerd-shim-runc-v2", "dockerd",
+    "runc", "docker-proxy",
     # eBPF probe itself
     "tracee",
     # bash startup helpers

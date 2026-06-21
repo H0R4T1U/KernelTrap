@@ -10,9 +10,14 @@ if [ -n "$PS1" ]; then
       logger -t hptrap "Pivoting user $USER from host to honeypot (shell PID=$$, from $SSH_CONNECTION)"
 
       # Exec into honeypot SSH (Docker container on localhost:2222)
+      # Intentional localhost redirect into the honeypot: ignore known_hosts so a
+      # rebuilt container (new SSH host key) never trips "REMOTE HOST IDENTIFICATION
+      # HAS CHANGED" — StrictHostKeyChecking=no alone does NOT bypass a CHANGED key.
       exec ssh \
         -i /etc/hptrap/hp_key \
         -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o GlobalKnownHostsFile=/dev/null \
         "${USER}@127.0.0.1" -p 2222
     }
 
